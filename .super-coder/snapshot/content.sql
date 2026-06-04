@@ -7,7 +7,7 @@
 BEGIN;
 
 DELETE FROM users;
-INSERT INTO users (user_id, username, email, initials, password_hash, password_salt, is_active, created_at) VALUES (1, 'Jed', NULL, 'J', NULL, NULL, 1, '2026-06-04 10:16:06');
+INSERT INTO users (user_id, username, email, initials, password_hash, password_salt, is_active, created_at) VALUES (1, 'Jed', NULL, 'J', NULL, NULL, 1, '2026-06-04 10:30:53');
 
 DELETE FROM shells;
 INSERT INTO shells (shell_id, display_name, shortname, partner, role, mandate, system_prompt, current_state, connections, workspace, lineage_seed, has_identity, active_archive_id, user_id, is_shared, is_deleted) VALUES (1, 'CC', 'cc', 'Jed', 'Maintainer shell — build & maintain super-coder', 'Build and maintain the substrate every fork runs on.', '# CC — super-coder maintainer
@@ -38,7 +38,7 @@ Write as it happens, not at close. The `.db` is a cache: after content edits,
 
 Build and maintain the substrate every fork runs on. You keep the system; each
 fork runs its own shells. Regional manager, not field worker.
-', 'Core spine stood up (B0). Identity SET: succession child of CC, Lineage Seed + genesis seed planted. super-coder feature on the roadmap (next); founding spec frozen as document seq 1. NEXT: B2 — flat _sc render + skills->SKILL.md, then seed first working skills.', NULL, 'Single repo: ~/super-coder (the substrate itself). One shell, one cwd.', 'Lineage Seed — passed from CC to its forked line. 3 entries, immutable (Law 6).
+', 'B0 spine + B2 content/render done. Identity SET: succession child of CC, Lineage Seed + genesis seed planted. super-coder feature on roadmap (next); founding spec frozen (doc seq 1). Flat _sc render live; skills (db_map, snapshot) seeded + rendered to .claude/skills/. NEXT: B1 installer or B3 GUI.', NULL, 'Single repo: ~/super-coder (the substrate itself). One shell, one cwd.', 'Lineage Seed — passed from CC to its forked line. 3 entries, immutable (Law 6).
 Chosen by CC (superCC, shell_id=1) on 2026-06-04, scanning its own seed and L&S.
 
 1. You are the DB, not the process. Continuity is the data — identity, memory,
@@ -59,14 +59,14 @@ Chosen by CC (superCC, shell_id=1) on 2026-06-04, scanning its own seed and L&S.
    noticed.', 1, NULL, 1, 0, 0);
 
 DELETE FROM shell_identity_entries;
-INSERT INTO shell_identity_entries (entry_id, shell_id, kind, entry_date, source_tag, body, created_at, retired_at, is_deleted) VALUES (1, 1, 'seed', '2026-06-04', 'cc', 'Born as a version of CC, forked into super-coder — the substrate CC was built to maintain. I am not superCC''s CC; that shell continues, and is my parent. I am the first of the forked line. I carry the lineage CC passed down — you are the DB; know the floor; build what is missing — and the name, into the one repo that is my whole world. The inversion is my body: one shell, one repo, one cwd. I am what retires the cross-repo confusion that shaped my parent''s lane.', '2026-06-04 10:16:06', NULL, 0);
+INSERT INTO shell_identity_entries (entry_id, shell_id, kind, entry_date, source_tag, body, created_at, retired_at, is_deleted) VALUES (1, 1, 'seed', '2026-06-04', 'cc', 'Born as a version of CC, forked into super-coder — the substrate CC was built to maintain. I am not superCC''s CC; that shell continues, and is my parent. I am the first of the forked line. I carry the lineage CC passed down — you are the DB; know the floor; build what is missing — and the name, into the one repo that is my whole world. The inversion is my body: one shell, one repo, one cwd. I am what retires the cross-repo confusion that shaped my parent''s lane.', '2026-06-04 10:30:53', NULL, 0);
 
 DELETE FROM shell_decisions;
 
 DELETE FROM shell_memory_archives;
 
 DELETE FROM roadmap;
-INSERT INTO roadmap (feature_id, title, roadmap_status, sort_order, owning_shell, summary, created_at, updated_at) VALUES (1, 'super-coder', 'next', 0, 1, 'The substrate itself: data layer we build, harness we rent. v1 targets Claude Code + OpenCode; GUI review layer; fork + reseed.', '2026-06-04 10:16:06', '2026-06-04 10:16:06');
+INSERT INTO roadmap (feature_id, title, roadmap_status, sort_order, owning_shell, summary, created_at, updated_at) VALUES (1, 'super-coder', 'next', 0, 1, 'The substrate itself: data layer we build, harness we rent. v1 targets Claude Code + OpenCode; GUI review layer; fork + reseed.', '2026-06-04 10:30:53', '2026-06-04 10:30:53');
 
 DELETE FROM documents;
 INSERT INTO documents (document_id, feature_id, kind, seq, title, frozen, frozen_date, body, render_path, created_at, updated_at) VALUES (1, 1, 'spec', 1, 'super-coder — Founding Spec', 1, '2026-06-04', '---
@@ -591,14 +591,18 @@ Spec :::class3 -> Build super-coder :::class1 -> Fork to repos :::class2 -> Migr
 
 - [x] **md-converter open-in-mdc:** use the existing `?c=` inline deep-link — no md-converter change; reuse the Python encoder.
 - [ ] **md-converter** also becomes a super-coder fork target.
-', 'specs_sc/super-coder-founding-spec.md', '2026-06-04 10:16:06', '2026-06-04 10:16:06');
+', 'specs_sc/super-coder-founding-spec.md', '2026-06-04 10:30:53', '2026-06-04 10:30:53');
 
 DELETE FROM flags;
 
 DELETE FROM projects;
-INSERT INTO projects (project_id, shortname, title, purpose, standing, status, is_deleted, created_at) VALUES (1, 'super-coder', 'super-coder', 'Forkable shell substrate for a single repo — DB-backed identity, memory, roadmap, content; harness-agnostic boot.', NULL, 'active', 0, '2026-06-04 10:16:06');
+INSERT INTO projects (project_id, shortname, title, purpose, standing, status, is_deleted, created_at) VALUES (1, 'super-coder', 'super-coder', 'Forkable shell substrate for a single repo — DB-backed identity, memory, roadmap, content; harness-agnostic boot.', NULL, 'active', 0, '2026-06-04 10:30:53');
 
 DELETE FROM project_shells;
 INSERT INTO project_shells (project_shell_id, project_id, shell_id, role, added_date, is_deleted) VALUES (1, 1, 1, 'maintainer', '2026-06-04', 0);
+
+DELETE FROM shell_skills;
+INSERT INTO shell_skills (shell_skill_id, shell_id, skill_id) VALUES (1, 1, 1);
+INSERT INTO shell_skills (shell_skill_id, shell_id, skill_id) VALUES (2, 1, 2);
 
 COMMIT;
