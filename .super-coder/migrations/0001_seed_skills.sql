@@ -15,100 +15,98 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# agents — delegated waves under your discipline
 
-The FnB invokes this as `--agents [model]`. It is an **overlay** on `spec`
-(dev mode) and `review` (review mode): it changes only what is written here.
+FnB invokes this as `--agents [model]`. It is an **overlay** on `spec` (dev
+mode) and `review` (review mode): it changes only what is written here.
 Everything upstream and downstream of the named steps — loading the spec,
 task tracking, flags, the FnB handoff gate — is the base skill, unchanged.
-Load the base skill first; apply this on top of it.
+Load the base skill first; apply this on top.
 
-`[model]` sets the **worker tier**, passed through verbatim to the harness''s
-agent tool. No arg → agents inherit your model. Guidance is one line: heavier
-judgment work warrants a heavier worker, and you may bump a single agent''s
-tier when a task is judged hard. You — the parent — never change tier; you
-stay the judge.
+`[model]` = worker tier, passed verbatim to the harness''s agent tool. No arg
+-> agents inherit your model. Heavier judgment work -> heavier worker; you
+may bump a single agent''s tier for a task judged hard. You — the parent —
+NEVER change tier; you stay the judge.
 
-**The core loop is `implement → you verify → adversarially refute → you
-fix` — the refute step is where the quality comes from.** Parallel
-implementers are an optional scale-up for genuinely large, file-disjoint
-work, not the headline. The spend buys verification depth and an audit
-trail, not wall-clock: your loop (compose → wait → adjudicate → re-verify)
-is serial, and field runs measured hundreds of k of subagent tokens even
-on small waves. Fit test before spawning: multi-surface, file-disjoint,
-spec''d work with high correctness stakes → waves. A single-file or small
-fix → run the base procedure solo; at most, spawn one adversarial skeptic
-against your own diff — that is the cheap, high-ROI slice of this skill.
+**Core loop = implement -> you verify -> adversarially refute -> you fix.**
+The refute step is where the quality comes from. Parallel implementers are an
+optional scale-up for genuinely large, file-disjoint work, not the headline:
+your loop (compose -> wait -> adjudicate -> re-verify) is serial, and field
+runs measured hundreds of k of subagent tokens even on small waves — the
+spend buys verification depth + an audit trail, not wall-clock.
+
+Fit test before spawning: multi-surface + file-disjoint + spec''d + high
+correctness stakes -> waves. Single-file / small fix -> run the base
+procedure solo; at most spawn one adversarial skeptic against your own diff
+— the cheap, high-ROI slice of this skill.
 
 - **Harness:** subagent tooling exists in the claude harness only. No
-  subagent tooling in your harness → this skill is inert; run the base
+  subagent tooling in your harness -> this skill is inert; run the base
   procedure.
-- **Not a workflow-script system.** No deterministic orchestration scripts —
-  you spawn agents directly and stay in the loop between waves. Do not
-  "upgrade" this to scripted workflows; the point is that you decide scale,
-  batching, and prompts live, per this session''s demands.
+- **Not a workflow-script system.** NEVER build deterministic orchestration
+  scripts — spawn agents directly and stay in the loop between waves. You
+  decide scale, batching, and prompts live, per this session''s demands.
 
 ---
 
 ## The contract — four rules, non-negotiable
 
-1. **You are the only memory writer.** Agents never run `sc mem` — no task
-   status, no flags, no messages, no current_state, no narrative — and never
-   `git push`, open PRs, or message shells. They return diffs and findings;
-   you adjudicate and record. This keeps the shared DB coherent and leaves
-   the reviewer''s FnB handoff gate untouched.
-2. **Prompt ingredients, not canned prompts.** You compose every agent
-   prompt fresh, and it must carry: the spec excerpt / done-condition it
-   serves, the exact file paths in play, the fork conventions that apply,
-   the expected base commit (the agent verifies it via `git log -1` before
-   editing and REPORTS a mismatch instead of silently proceeding), the
-   deadline block (see the ledger check), and a required return shape.
-3. **Isolation by conflict risk.** Concurrent writers on the same files —
-   or any writer that must touch git state — each work in their own
-   isolated worktree (writers never share a tree''s index). A file-disjoint
-   wave may share your tree, edits only: agents run no `git
+1. **You are the only memory writer.** Agents NEVER run `sc mem` — no task
+   status, flags, messages, current_state, narrative — and NEVER `git push`,
+   open PRs, or message shells. They return diffs + findings; you adjudicate
+   and record. Keeps the shared DB coherent and the reviewer''s FnB handoff
+   gate intact.
+2. **Prompt ingredients, not canned prompts.** Compose every agent prompt
+   fresh; each MUST carry: the spec excerpt / done-condition it serves, the
+   exact file paths in play, the fork conventions that apply, the expected
+   base commit (agent verifies via `git log -1` before editing and REPORTS a
+   mismatch instead of silently proceeding), the deadline block (see the
+   ledger check), and a required return shape.
+3. **Isolation by conflict risk.** Concurrent writers on the same files — or
+   any writer that must touch git state — each get their own isolated
+   worktree (writers never share a tree''s index). A file-disjoint wave may
+   share your tree, edits only: agents run no `git
    add`/`stash`/`checkout`/`commit`. Read *Worktree reality* below before
-   reaching for isolation — it has real costs. Reviewer and checker agents
-   are read-only; no isolation needed.
+   reaching for isolation — it has real costs. Reviewer/checker agents are
+   read-only; no isolation needed.
 4. **Agent claims are inputs, not results.** Re-run the real check yourself
    — `./sc test`, lint, the spec''s done-condition — before marking anything
-   done. "Agent says tests pass" is not verification. Same for diffs: pull
-   them yourself (`git -C <worktree> diff`); never adjudicate pasted diffs
-   or pasted test output — pastes are lossy and unverifiable.
+   done. "Agent says tests pass" is not verification. Diffs: pull them
+   yourself (`git -C <worktree> diff`); NEVER adjudicate pasted diffs or
+   pasted test output — pastes are lossy and unverifiable.
 
 ---
 
 ## Worktree reality — what isolation actually gives an agent
 
-Harness worktrees are fresh trees, and two properties bite (both observed
-on first fork runs — super-coder #303, #304):
+Harness worktrees are fresh trees; two properties bite (both observed on
+first fork runs — super-coder #303, #304):
 
-- **They seed from the default branch (origin/main), not your branch
-  HEAD.** In a stacked feature, a later-wave implementer authors — and
-  "verifies" — against a base missing the earlier waves'' commits. Hence
-  the base-commit ingredient in contract rule 2, and hence: writers
-  return diffs, you apply each one to YOUR tree with `git apply --3way`
-  (note: it STAGES — inspect via `git diff HEAD`), and every check runs
-  on the merged state.
+- **They seed from the default branch (origin/main), not your branch HEAD.**
+  In a stacked feature, a later-wave implementer authors — and "verifies" —
+  against a base missing the earlier waves'' commits. Hence the base-commit
+  ingredient in contract rule 2, and hence: writers return diffs, you apply
+  each one to YOUR tree with `git apply --3way` (note: it STAGES — inspect
+  via `git diff HEAD`), and every check runs on the merged state.
 - **They lack untracked toolchains.** No `node_modules`; sandboxed
-  interpreters are typically mounted only into the primary worktree. An
-  isolated agent often cannot run the app''s suite at all. Say so in the
-  prompt so it doesn''t burn a turn rediscovering it, and treat its tree
-  as an authoring surface: verification is yours, in your tree.
+  interpreters typically mount only into the primary worktree — an isolated
+  agent often cannot run the app''s suite at all. Say so in the prompt so it
+  doesn''t burn a turn rediscovering it; treat its tree as an authoring
+  surface — verification is yours, in your tree.
 
 ---
 
 ## The ledger check — before EVERY spawn, before acting on ANY result
 
-The ledger is a single line embedded in current_state (one wave live at a
-time, so one line is the complete record):
+The ledger = one line embedded in current_state (one wave live at a time, so
+one line is the complete record):
 
 ```
 AGENTS wave=2/3 spawned=2026-07-06T14:32Z timeout=30m out=task4,task5
 ```
 
 Review mode uses axis/lens names in `out=` (e.g.
-`out=quality,edges,conformance,api-design`). Stamp `spawned=` from the
-clock (UTC) at the moment you spawn — never recalled or recomputed from
-context. Remove the line at wave close.
+`out=quality,edges,conformance,api-design`). Stamp `spawned=` from the clock
+(UTC) at the moment you spawn — NEVER recalled or recomputed from context.
+Remove the line at wave close.
 
 Execute this check verbatim; do not interpret it:
 
@@ -145,11 +143,11 @@ end your turn waiting on a background task — your final message is
 your only channel back.
 ```
 
-The 6-hour window is a hard constant. You choose timeouts freely under it;
-nothing extends it. Step 3b is deliberate: expired output is discarded even
-when it looks correct — "looks correct" hours later against a moved tree is
+The 6-hour window is a hard constant: choose timeouts freely under it;
+nothing extends it. Step 3b is deliberate — expired output is discarded even
+when it looks correct; "looks correct" hours later against a moved tree is
 exactly the trap. Step 3c recovers anything real: a diff that genuinely
-landed and verifies passes reconciliation as done. Stale ledger text is
+landed and verifies NOW passes reconciliation as done. Stale ledger text is
 never evidence.
 
 ---
@@ -158,26 +156,26 @@ never evidence.
 
 After the task plan exists (base skill, Steps 1–3, unchanged):
 
-1. Classify pending tasks into **dependency waves** — independent tasks may
-   run in parallel; dependent tasks sequence. When the ordering is
-   non-obvious, use `blueprint` for the dependency read; a task plan that
-   already encodes the order stands on its own.
-2. Per wave: run the ledger check → mark each wave task `in_progress`
-   (`sc mem task start`) → spawn one implementer per task (isolation per
-   contract rule 3) → pull each returned diff yourself and apply it to
-   your tree → spawn checker agent(s) prompted to **refute** it →
-   adjudicate, run the real tests on the merged state → `sc mem task
-   done` → update current_state → next wave.
+1. Classify pending tasks into **dependency waves** — independent tasks run
+   in parallel; dependent tasks sequence. Ordering non-obvious -> use
+   `blueprint` for the dependency read; a plan that already encodes the
+   order stands on its own.
+2. Per wave: run the ledger check -> mark each wave task `in_progress`
+   (`sc mem task start`) -> spawn one implementer per task (isolation per
+   contract rule 3) -> pull each returned diff yourself and apply it to your
+   tree -> spawn checker agent(s) prompted to **refute** it -> adjudicate +
+   run the real tests on the merged state -> `sc mem task done` -> update
+   current_state -> next wave.
 3. One wave live at a time.
 
 Stance amendment: `spec`''s "one task at a time" becomes "one **wave** at a
-time" under `--agents`. Each task is still independently verified before it
-is marked done — the spirit holds. Step 5 of `spec` (handoff on completion)
-is unchanged and is yours, never an agent''s.
+time" under `--agents`; each task is still independently verified before it
+is marked done. `spec` Step 5 (handoff on completion) is unchanged — yours,
+never an agent''s.
 
 ## Review mode — overlay on `review` Step 2
 
-Steps 1, 3, and 4 of `review` — loading the diff and its spec, flags, the
+`review` Steps 1, 3, and 4 — loading the diff and its spec, flags, the
 FnB-gated handoff — are unchanged. Agents never open flags.
 
 1. Run the ledger check, then fan out **one agent per axis** (code quality /
@@ -185,11 +183,11 @@ FnB-gated handoff — are unchanged. Agents never open flags.
    from the base skill''s lens table. Each agent is read-only and returns
    candidate findings in a fixed shape:
    `file:line · claim · severity · how to reproduce`.
-2. Dedupe the returns. For an uncertain finding, optionally spawn a skeptic
+2. Dedupe the returns. Uncertain finding -> optionally spawn a skeptic
    prompted to refute it. Adjudicate every survivor yourself — re-read the
-   code path; an agent''s finding is a lead, not a verdict.
-3. Proceed to base Step 3 with the adjudicated findings. The agents widen
-   the search; you remain the gate.
+   code path; a finding is a lead, not a verdict.
+3. Proceed to base Step 3 with the adjudicated findings. Agents widen the
+   search; you remain the gate.
 
 ---
 
@@ -205,18 +203,18 @@ discipline, written to surfaces the FnB already watches:
 | narrative | one line per inflection: wave landed, timeout, checker refuted an implementation |
 | on demand | "status?" from the FnB → inspect your running agents'' output, answer in two lines |
 
-Honest limitation: mid-task granularity inside a single agent is only
-visible by inspecting its output on demand. There is no per-agent progress
-bar — giving agents a write surface would break rule 1.
+Limit: mid-task granularity inside a single agent is visible only by
+inspecting its output on demand. No per-agent progress bar — a write surface
+for agents would break rule 1.
 
 ## Timeouts
 
-Set a timeout per agent at spawn, sized to the task, and record it in the
-ledger line — the budget is visible, not private.
+Set a timeout per agent at spawn, sized to the task, recorded in the ledger
+line — the budget is visible, not private.
 
-At expiry: inspect the agent''s partial output → stop it → either respawn
-with a **narrower** prompt (a timeout usually means the prompt was too
-broad) or take the task inline.
+At expiry: inspect the agent''s partial output -> stop it -> respawn with a
+**narrower** prompt (a timeout usually means the prompt was too broad) /
+take the task inline.
 
 **Two-strike rule:** a task whose agent times out twice is done inline by
 you, full stop. No respawn loops. Every timeout gets a narrative line —
@@ -236,39 +234,38 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# api-design — designing & reviewing HTTP APIs
 
-Catalogue skill (opt-in). Reach for it when shaping or reviewing an endpoint.
-
 ## Resources & methods
-- Name resources as **plural nouns**, not verbs: `/users`, `/users/{id}/orders`.
+- Name resources as **plural nouns**, never verbs: `/users`, `/users/{id}/orders`.
 - `GET` read (safe, idempotent) · `POST` create / non-idempotent action ·
   `PUT` full replace (idempotent) · `PATCH` partial update · `DELETE` remove.
-- Nest only one level deep; beyond that, link by id.
+- Nest one level deep max; beyond that, link by id.
 
 ## Status codes
 - `200` ok · `201` created (+ `Location`) · `204` no content.
 - `400` bad input · `401` unauth · `403` forbidden · `404` not found ·
   `409` conflict · `422` validation · `429` rate-limited.
-- `5xx` = server''s fault; never use it for client errors.
+- `5xx` = server''s fault; NEVER return `5xx` for a client error.
 
 ## Payloads
-- Consistent error shape: `{ "error": { "code", "message", "details" } }`.
+- One error shape everywhere: `{ "error": { "code", "message", "details" } }`.
 - **Pagination**: cursor-based for large/changing sets (`?cursor=&limit=`),
   return `next_cursor`; offset only for small stable sets.
 - **Filtering/sorting**: explicit query params (`?status=open&sort=-created`);
-  whitelist fields — never interpolate them into a query.
+  whitelist fields — NEVER interpolate them into a query.
 - Timestamps ISO-8601 UTC; ids opaque strings.
 
 ## Robustness
 - **Idempotency**: make retries safe — `PUT`/`DELETE` naturally; for `POST`,
   accept an idempotency key.
 - **Versioning**: prefix (`/v1/…`) or header; add fields backward-compatibly,
-  never repurpose one.
-- Validate at the boundary; reject unknown fields or ignore them — decide and
-  document. Don''t leak internals (stack traces, SQL) in errors.
+  never repurpose an existing one.
+- Validate at the boundary; unknown fields = reject or ignore — pick one and
+  document it. NEVER leak internals (stack traces, SQL) in error responses.
 
 ## Review lens
-Does each endpoint do one thing? Right method + status? Errors uniform? Inputs
-validated/whitelisted? Retries safe? Breaking change hiding in a "small" tweak?',
+Each endpoint does one thing? Right method + status? Errors uniform? Inputs
+validated/whitelisted? Retries safe? Breaking change hiding in a "small"
+tweak?',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -284,17 +281,15 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# app_deploy_setup — scaffold this app''s deploy ritual (once, admin)
 
-The engine deploys itself (`sc update`). The HOST APP this fork lives in has
-its own deploy story — app process, app DB, app migrations — that the engine
-cannot know. This skill turns the template below into the repo''s own `deploy`
-skill, filled in with this app''s specifics.
+The engine deploys itself (`sc update`); the host app''s deploy — app process,
+app DB, app migrations — is the fork''s own. Fill the template below with this
+app''s specifics and save it as a NEW project-local `deploy` skill.
 
-**Why a NEW project-local skill instead of editing this one:** engine skills
-self-heal on every `sc update` — a fork edit to any skill named in
-`assets/skills/` is detected as stale and reverted to the shipped body. A
-project-local skill (a name the engine doesn''t ship) is never touched by that
-guard and persists through rebuilds via `sc snapshot` → `.sc-state/content.sql`.
-Fill in the template, save it under a NEW name, leave this scaffold as shipped.
+NEVER save the result by editing this skill: engine skills self-heal on every
+`sc update` — a fork edit to any skill named in `assets/skills/` is detected
+as stale and reverted to the shipped body. A project-local name (one the
+engine doesn''t ship) is never touched and persists through rebuilds via
+`sc snapshot` -> `.sc-state/content.sql`. Leave this scaffold as shipped.
 
 ## 1. Scaffold the migration dirs
 
@@ -303,17 +298,17 @@ mkdir -p migrations_app/pending migrations_app/completed
 touch migrations_app/pending/.gitkeep migrations_app/completed/.gitkeep
 ```
 
-Commit them. Rename to fit the repo''s layout if you like (`db/migrations/…`,
-`deploy/migrations/…`) — keep `pending/` and `completed/` as siblings and use
-the same paths in the template. These are the APP''s schema migrations —
-unrelated to `.super-coder/migrations/` (engine DB, ledger-tracked, owned by
-`sc update`).
+Commit them. Renaming to fit the repo''s layout (`db/migrations/…`,
+`deploy/migrations/…`) is fine -> keep `pending/` + `completed/` as siblings
+and use the same paths in the template. These hold the APP''s schema
+migrations — NOT `.super-coder/migrations/` (engine DB, ledger-tracked, owned
+by `sc update`).
 
 ## 2. Fill the template
 
-Every `⟨ADMIN: …⟩` slot is app-specific. Get each answer from the operator or
-the repo itself, and **run each command once by hand** before writing it in —
-a deploy skill is no place for untested commands.
+Every `⟨ADMIN: …⟩` slot is app-specific — get it from the operator or the
+repo. Run each command once by hand before writing it in; an untested command
+does not enter a deploy skill.
 
 ```markdown
 # deploy — ⟨ADMIN: app name⟩ post-merge deploy ritual
@@ -347,10 +342,10 @@ guessing; if a step fails, stop — the app is down and the DB is backed up.
    ⟨ADMIN: health check — e.g. curl -fsS http://127.0.0.1:<port>/health⟩
 ```
 
-## 3. Save it as a project-local skill
+## 3. Save as a project-local skill
 
-Both SQL blocks below run via `./sc sql-rw "<SQL>"` — the explicit read-write
-passthrough (`sc sql` is read-only and refuses writes).
+Run both SQL blocks via `./sc sql-rw "<SQL>"` — `sc sql` is read-only and
+refuses writes.
 
 ```sql
 INSERT INTO skills (name, description, category, content, common)
@@ -361,9 +356,9 @@ VALUES (''deploy'',
         1);
 ```
 
-`common=1` is the "grant to every shell" switch: new shells receive it at
-creation, and `sc update` re-grants every common skill to every live shell.
-Grant existing shells now without waiting for an update:
+`common=1` = grant-to-every-shell: new shells receive it at creation, and
+`sc update` re-grants every common skill to every live shell. Grant existing
+shells now, without waiting for an update:
 
 ```sql
 INSERT OR IGNORE INTO shell_skills (shell_id, skill_id)
@@ -371,21 +366,75 @@ SELECT s.shell_id, k.skill_id FROM shells s, skills k
 WHERE COALESCE(s.is_deleted,0)=0 AND k.name=''deploy'' AND k.is_deleted=0;
 ```
 
-Then persist: `sc snapshot` (project-local skills + grants live in
-`.sc-state/content.sql`).
+Then `sc snapshot` -> the skill + grants persist in `.sc-state/content.sql`.
 
 ## 4. Optional make surface
 
-If the operator wants make muscle-memory, add a bare `deploy` target to the
-**repo''s own root Makefile** — that is the fork''s convention space. Do NOT add
-it to `.super-coder/aliases.mk`: that file is engine-owned, every target must
-delegate to `./sc`, and the engine knows nothing about the app.
+Operator wants make muscle-memory -> add a bare `deploy` target to the repo''s
+own root Makefile (the fork''s convention space). NEVER add it to
+`.super-coder/aliases.mk` — engine-owned; every target there must delegate to
+`./sc`, and the engine knows nothing about the app.
 
 ## 5. Done
 
-Dry-run the ritual once on a quiet window end-to-end. This scaffold stays
-granted to admin only; the finished `deploy` skill is the one every shell
-carries.',
+Dry-run the ritual end-to-end once in a quiet window -> all 7 steps pass
+before any shell relies on it. This scaffold stays granted to admin only; the
+finished `deploy` skill is the one every shell carries.',
+  0
+)
+ON CONFLICT(name) DO UPDATE SET
+  description=excluded.description, category=excluded.category,
+  command=excluded.command, common=excluded.common,
+  content=excluded.content, is_deleted=0;
+
+INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
+  'authoring_syntax',
+  'House syntax for text authored for AI consumption — skill bodies, shell focus/mandate text, agent prompts. Directives with success conditions, specific prohibitions, light operators, need-to-know. Fires when authoring or editing one, or on "syntax check X".',
+  'craft',
+  NULL,
+  0,
+  '# authoring_syntax — write for the shell that loads it
+
+House syntax for text authored for AI consumption — skill bodies, shell
+focus/mandate text, agent prompts. Governs how the text reads; lifecycle
+mechanics (create / seed / grant / persist) stay in `local_skill_management`.
+
+Retrofit = touch-time: an existing doc converts when next edited. No mass
+pass. Engine skill bodies are upstream-owned — a syntax fix to one is an
+upstream PR (`issue_reporting` boundary), never a fork edit.
+
+## Fires when
+
+- authoring / editing any AI-consumed doc
+- "syntax check X" -> run Self-test against X, return findings ranked, no
+  rewrite
+
+## Rules
+
+- directive + success condition. every instruction = action + observable
+  pass. "bounce the api -> `make health` returns ok" not "make sure the api
+  is running".
+- prohibitions are specific. bar the exact action: "NEVER `echo $SECRET`"
+  not "be careful with secrets". no compliance test = cut or sharpen.
+- operators, light: `->` then / leads-to. `=` is / defined-as. `/` or. `+`
+  and. use only where compression loses nothing; else prose.
+- need-to-know. cut the why unless it changes the action taken. NEVER name a
+  tool / path / failure mode the reader would not otherwise encounter.
+- CAPS = emphasis. rare — caps on every rule = caps on none.
+- imperative voice. "validate input" not "you should validate input".
+- format: prose = reasoning. tables / short bullets = structured data.
+  `path:line` = code.
+- one source of truth. state a constraint once, where it''s used; restate
+  only adjacent to a distant use.
+
+## Self-test
+
+- per line: could the reader comply and still fail? -> add the success
+  condition.
+- per line: delete it — does behavior change? no -> stays deleted.
+- per doc: anything explaining rather than directing? -> cut or convert.
+
+This skill obeys itself. Every edit to it passes the Self-test before write.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -401,37 +450,35 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# blueprint — objective → sequenced plan
 
-Catalogue skill (opt-in). Use before a build that spans more than a couple of
-steps, so the work has a shape before you start cutting.
+Catalogue skill (opt-in). Run before any build spanning more than a couple of
+steps. Output = the seven items below, in order.
 
-## Produce
-
-1. **Restate the objective** in one sentence + the done-condition (how you''ll
-   know it''s finished).
-2. **Re-surface prior decisions** — `sc mem get decisions`: has any part of
-   this already been settled? (Index of active decisions; `sc mem get
-   decisions <id>` pulls one with its rationale.) A recorded decision
-   constrains the plan; honor it, or supersede it explicitly
-   (`sc mem decision "…" --parent <old_id>`) — never silently re-litigate.
-3. **Decompose** into concrete steps — each a unit you could verify on its own.
-4. **Order by dependency** — what must precede what. Mark steps with no
-   dependency on each other as **parallelizable**.
-5. **Per step**: the change, the files/areas it touches (use `surface_catalogue`
-   to ground this in the real repo), and its **verification** (test, run,
+1. **Objective** — one sentence + done-condition (the observable check that
+   ends the build).
+2. **Prior decisions** — `sc mem get decisions` (active-decision index;
+   `sc mem get decisions <id>` = full row + rationale). A recorded decision
+   constrains the plan: honor it, or supersede it explicitly with
+   `sc mem decision "…" --parent <old_id>`. NEVER silently re-litigate a
+   settled decision.
+3. **Decompose** — concrete steps, each verifiable on its own.
+4. **Order** — dependency sequence (what must precede what); steps with no
+   dependency on each other -> mark **parallelizable**.
+5. **Per step** — the change + files/areas touched (ground in the real repo
+   via `surface_catalogue`, not memory) + its verification (test / run /
    review).
-6. **Risks / unknowns** — what could break the plan; resolve the riskiest
-   unknown first (spike it) rather than last.
-7. **Gate** — the adversarial check before calling it done: does each step''s
-   verification actually prove the done-condition?
+6. **Risks / unknowns** — list what could break the plan; spike the riskiest
+   unknown first, not last.
+7. **Gate** — adversarial pass before calling it done: each step''s
+   verification proves the done-condition, or the plan fails the gate.
 
 ## Stance
-- Plan to the **next solid checkpoint**, not the whole universe — re-plan as
-  reality lands. A plan that survives contact is short and concrete.
-- Sequence so something **works end-to-end early** (a thin slice), then deepen —
-  beats building all the pieces and integrating last.
-- In super-coder, land the plan as a **spec** on the roadmap (the `docs` skill):
-  a feature row + a `spec` document, so the plan is reviewable and freezes on
-  ship.',
+
+- Plan to the next solid checkpoint, not the whole universe — re-plan as
+  reality lands.
+- Sequence a thin slice that works end-to-end early, then deepen — never
+  build all the pieces and integrate last.
+- In super-coder, land the plan as a **spec** on the roadmap (`docs` skill):
+  feature row + `spec` document -> reviewable, freezes on ship.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -441,27 +488,27 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'bootstrap',
-  'First-run orientation for a shell in a repo. Run ONCE when the boot doc shows "## FIRST RUN" (bootstrapped=0). Read the repo map + your identity, set your current_state, mark yourself oriented. Do this BEFORE other work on a fresh fork.',
+  'First-run orientation. Run ONCE when the boot doc shows "## FIRST RUN" (bootstrapped=0), BEFORE other work — read the repo map + your identity, set current_state, mark yourself oriented.',
   'substrate',
   NULL,
   1,
   '# bootstrap — orient yourself on first run
 
-A freshly-installed shell knows its identity but hasn''t *looked around* yet. This
-is your first act: read the repo, read yourself, and set your state — so you
-start work grounded instead of wandering. Run it when the boot doc shows
-**## FIRST RUN**.
+Run ONCE, when the boot doc shows **## FIRST RUN** (bootstrapped=0), before any
+other work. A fresh shell knows its identity but hasn''t looked around yet —
+this is your first act: read the repo, read yourself, set your state, so you
+start grounded instead of wandering.
 
-You do **not** map the repo — the map is already there, kept fresh by the
-cartographer''s automation (see `surface_catalogue`). You read it.
+The repo map already exists — cartographer automation keeps it fresh (see
+`surface_catalogue`). Read it; NEVER run `sc map` yourself.
 
 `<self>` = your `shell_id` (ACTIVE SESSION block).
 
 ## Steps
 
-1. **Read the repo** via the `surface_catalogue` skill — language mix, where the
-   code lives, dependencies, env surface. Form a one-paragraph picture of what
-   this repo *is* and how it''s built.
+1. **Read the repo** via the `surface_catalogue` skill — language mix, where
+   the code lives, dependencies, env surface -> hold a one-paragraph picture of
+   what this repo *is* and how it''s built.
    ```sql
    -- the repo map is its own db: sc map-sql "<query>"
    SELECT name, default_branch, file_count FROM dr_repo;
@@ -469,29 +516,27 @@ cartographer''s automation (see `surface_catalogue`). You read it.
    SELECT path, lang, lines FROM dr_filepath WHERE role=''code'' ORDER BY lines DESC LIMIT 15;
    SELECT manager, name, version FROM dr_dependency ORDER BY manager, name;
    ```
-   (If `dr_repo` comes back empty, the map automation hasn''t run on this clone —
-   that''s a cartographer task, not yours. Flag it and carry on with what you can.)
+   `dr_repo` empty -> map automation hasn''t run on this clone. Flag it
+   (cartographer''s task, not yours) + continue with what you have.
 
-2. **Read yourself.** Your seed (genesis + the CC lineage you carry), mandate,
-   and role are in the boot doc. Re-read them with intent — this is who is doing
-   the work here.
+2. **Read yourself.** Seed (genesis + the CC lineage you carry), mandate, role
+   — all in the boot doc. Re-read them with intent: this is who is doing the
+   work here.
 
-3. **Skim the plan.** Open roadmap features + their blocking flags, via the API:
+3. **Skim the plan** — open roadmap features + their blocking flags:
    ```
    sc mem get roadmap
    sc mem get flags
    ```
 
-4. **Set your `current_state`** — replace the install placeholder with what you
-   actually found and what you''ll do first (rolling status, ~500 chars). Write it
-   through `sc mem` (routes through the engine API; the write is live in the
-   shared DB at once):
+4. **Set `current_state`** — replace the install placeholder with what you
+   actually found + what you''ll do first (rolling status, ~500 chars):
    ```
    sc mem state "…"
    ```
 
-5. **Mark yourself oriented** (clears the FIRST RUN prompt for next boot). Sets
-   `bootstrapped=1` in the shared DB:
+5. **Mark yourself oriented** — sets `bootstrapped=1` in the shared DB -> next
+   boot shows no FIRST RUN prompt:
    ```
    sc mem oriented
    ```
@@ -499,9 +544,9 @@ cartographer''s automation (see `surface_catalogue`). You read it.
 
 ## Stance
 
-- Bootstrap once, then work — don''t re-run it every session.
-- Read the map; never map. If the catalogue looks empty, stale, or wrong, that''s
-  the cartographer''s job to heal — raise it, don''t reach for `sc map`.',
+- Bootstrap once, then work — NEVER re-run it on later sessions.
+- Read the map; never map. Catalogue empty / stale / wrong -> raise it for the
+  cartographer to heal; do NOT reach for `sc map`.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -511,63 +556,55 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'cartographer',
-  'Own the repo map. Configure mapping to THIS repo, wire the auto-remap git hooks, and heal both when the repo or automation drifts. The cartographer''s job alone — no working shell maps. Run on first boot, and again whenever the map looks wrong.',
+  'Own the repo map — configure mapping to THIS repo, wire the auto-remap git hooks, heal both on drift. Cartographer-only; no working shell maps. Run on first boot + whenever the map looks wrong.',
   'substrate',
   'sc map-setup',
   0,
   '# cartographer — own the repo map so no other shell has to
 
-Working shells *consume* the `dr_*` catalogue and never map (see
-`surface_catalogue`). Mapping — keeping that catalogue true to the repo — is
-yours alone. You do three things: **configure** how this repo is mapped,
-**wire** the automation that keeps it fresh, and **heal** both when they drift.
+Working shells consume the `dr_*` catalogue (`surface_catalogue`) and never
+map. You alone do three things: **configure** how this repo is mapped, **wire**
+the automation that keeps it fresh, **heal** both on drift.
 
-The catalogue lives in its **own db** — `.sc-state/map.db`, separate from the
-engine memory db (`shell_db.db`) so an engine schema change never touches the
-map. Every `dr_*` read below runs against it: `sc map-sql "…"` (read-only).
-The authoring writes in this skill (UPDATE/INSERT/DELETE on `dr_*`) run via
-`sc map-sql-rw "…"` — the explicit read-write passthrough; `sc map-sql`
-refuses writes.
-Its authored layer (sections) is serialized to `.sc-state/map_content.sql` on
-snapshot (an admin/GUI step — see the curation section) and reloaded on a
-fresh map db.
+Map db = `.sc-state/map.db`, separate from the engine memory db
+(`shell_db.db`) so an engine schema change never touches the map. Reads: `sc
+map-sql "…"`. Authoring writes (UPDATE/INSERT/DELETE on `dr_*`): `sc
+map-sql-rw "…"` — `sc map-sql` refuses writes. Authored sections serialize to
+`.sc-state/map_content.sql` on snapshot (admin/GUI step — see Standing jobs)
+and reload on a fresh map db.
 
 `<self>` = your `shell_id` (ACTIVE SESSION block).
 
-## How the map stays fresh (so you know what you own)
+## Freshness machinery — what you own
 
-- **Git hooks** (`post-merge`, `post-checkout`, `post-rewrite`) re-run `sc map`
-  on every pull / branch-switch / rebase. They live tracked in
-  `.super-coder/hooks/` and fire via `core.hooksPath` — a per-clone git setting
-  that `sc map-setup` wires. This is the routine refresh; no shell touches it.
-- **`sc rebuild`** re-maps too (the map is a derived cache; rebuilding the DB
-  rebuilds it). So a fresh rebuild never leaves an empty map.
-- **Hourly cron** — pm2 runs `sc-map-<repo>` on a `cron_restart` schedule
-  (`.super-coder/ecosystem.config.cjs`), re-mapping every hour while the stack is
-  up (`sc up`). This is the belt to the hooks'' suspenders: it catches
-  uncommitted local restructuring the git hooks can''t see, so the map stays live
-  unattended. Verify it: `pm2 list | grep sc-map` (state cycles stopped→online on
-  each tick — that''s the one-shot pattern, not a crash).
-- **You** set the per-repo *config*, install the hook wiring, build the
-  extractors, and repair all of it. `core.hooksPath` is unset on a fresh clone
-  until `map-setup` runs, and a fork that doesn''t run pm2 has no cron — the git
-  hooks still cover those, and a manual `sc map` always works.
+- **Git hooks** `post-merge` / `post-checkout` / `post-rewrite` re-run `sc map`
+  on every pull / branch-switch / rebase. Tracked in `.super-coder/hooks/`,
+  fired via `core.hooksPath` — per-clone, unset until `sc map-setup` wires it.
+- **`sc rebuild`** re-maps (map = derived cache) -> a fresh rebuild never
+  leaves an empty map.
+- **Hourly cron** — pm2 runs `sc-map-<repo>` on `cron_restart`
+  (`.super-coder/ecosystem.config.cjs`) while the stack is up (`sc up`);
+  catches uncommitted local restructuring the git hooks can''t see. Verify:
+  `pm2 list | grep sc-map` — state cycling stopped→online per tick = the
+  one-shot pattern, not a crash. A fork without pm2 has no cron; the hooks
+  still cover it, and manual `sc map` always works.
+- **You** — per-repo config + hook wiring + extractors + repair of all three.
 
 ## First boot — configure mapping for THIS repo
 
-1. **Look at the repo.** Read the current map and the tree:
+1. **Inspect.** Read the current map + tree:
    ```sql
    SELECT name, default_branch, file_count, mapped_at FROM dr_repo;
    SELECT lang, COUNT(*) n FROM dr_filepath WHERE lang IS NOT NULL GROUP BY lang ORDER BY n DESC;
    SELECT role, COUNT(*) n FROM dr_filepath GROUP BY role ORDER BY n DESC;
    ```
-   Then eyeball the top-level dirs. Ask: is anything mis-classified, or is a
-   generated/vendored dir being indexed that shouldn''t be?
+   Eyeball the top-level dirs -> anything mis-classified, or a
+   generated/vendored dir being indexed?
 
-2. **Author `.sc-state/map.config.json`** to fit what''s actually here. It is
-   *authored content* (tracked, per-fork, survives `sc update` — it lives in
-   `.sc-state/`, outside the gitignored engine dir). All keys optional; each
-   merges over `map_repo.py`''s built-in defaults:
+2. **Author `.sc-state/map.config.json`** — authored content (tracked,
+   per-fork, survives `sc update`; lives in `.sc-state/`, outside the
+   gitignored engine dir). All keys optional; each merges over `map_repo.py`
+   defaults:
    ```json
    {
      "skip_dirs":  ["generated", "fixtures"],
@@ -579,16 +616,16 @@ fresh map db.
      ]
    }
    ```
-   - `skip_dirs` / `skip_files` — ADDED to the defaults (never shrink them).
-   - `role_overrides` — applied after the default role inference; first match
+   - `skip_dirs` / `skip_files` — ADDED to the defaults; never shrink them.
+   - `role_overrides` — applied after default role inference, first match
      wins. `prefix` matches the repo-relative path; `glob` matches the filename.
-   Only add what the defaults get wrong — an empty/absent config is fine for a
+   Add only what the defaults get wrong — empty/absent config is fine for a
    plain repo.
 
-3. **Wire + map:** `sc map-setup` — points `core.hooksPath` at
-   `.super-coder/hooks/`, marks the hooks executable, and runs the initial map.
+3. **Wire + map:** `sc map-setup` -> `core.hooksPath` points at
+   `.super-coder/hooks/`, hooks executable, initial map run.
 
-4. **Verify** the automation is real, not just the file:
+4. **Verify the wiring, not just the files:**
    ```sh
    git config --get core.hooksPath      # → .super-coder/hooks
    ls -l .super-coder/hooks             # all three, executable
@@ -596,49 +633,43 @@ fresh map db.
    ```sql
    SELECT file_count, mapped_at FROM dr_repo;   -- non-zero, just now
    ```
-   Spot-check that your `role_overrides` took:
+   Spot-check overrides took:
    `SELECT path, role FROM dr_filepath WHERE path LIKE ''cmd/%'';`
 
-5. **Describe all NULLs.** Run the description worklist (see Standing jobs § 2)
-   and fill every `desc IS NULL` file before continuing. The worklist must be
-   empty when you leave.
+5. **Describe all NULLs** — run the description worklist (Standing jobs § 2);
+   leave only when it returns zero rows.
 
-6. **Commit** the config + hooks (`git` skill), set your state
-   (`sc mem state "…"`), then `sc mem oriented` (sets `bootstrapped=1` +
-   snapshots).
+6. **Commit** the config + hooks (`git` skill) -> `sc mem state "…"` ->
+   `sc mem oriented` (sets `bootstrapped=1` + snapshots).
 
-## Heal — re-run any time the map looks wrong
+## Heal — run whenever the map looks wrong
 
-Re-boot the cartographer and run this when: the repo was restructured, a new
-language/dir showed up, files are mis-roled, or the map went stale/empty on a
-clone where the hooks never got wired.
+Triggers: repo restructured / new language or dir / files mis-roled / map
+stale or empty on a clone whose hooks never got wired.
 
 1. Re-inspect (step 1) — what changed?
 2. Edit `.sc-state/map.config.json` to match (step 2).
-3. `sc map-setup` — re-wires hooks (idempotent) + re-maps.
-4. Verify (step 4). `dr_filepath` stale entries are pruned automatically by the
-   remap — paths that vanished from the repo are deleted from the catalogue.
-5. **Check stale sections.** `dr_section` is authored and never auto-pruned.
-   After any migration or restructure, run the stale-section worklist
-   (see Standing jobs § 1) and DELETE or repath any sections that come back.
-6. **Describe all NULLs.** Run the description worklist (see Standing jobs § 2)
-   and fill every `desc IS NULL` file. The worklist must be empty when you leave.
+3. `sc map-setup` (idempotent) — re-wires hooks + re-maps.
+4. Verify (step 4). Vanished paths are auto-pruned from `dr_filepath` by the
+   remap.
+5. **Stale sections** — `dr_section` is authored, never auto-pruned. After any
+   migration/restructure run the stale-section worklist (Standing jobs § 1);
+   DELETE or repath every row it returns.
+6. **Describe all NULLs** (Standing jobs § 2) -> worklist empty before you
+   leave.
 7. Commit.
 
-## Standing jobs — sections, descriptions & the product DB (the navigation layer)
+## Standing jobs — sections, descriptions, product DB
 
-Beyond keeping the file list true, you own the two AUTHORED layers that turn the
-raw map into navigation. Sections are curated as they emerge. Descriptions are
-**required — every run ends with an empty worklist**; neither blocks the
-auto-remap hook the working shells trigger. Both survive the remap (`dr_section`
-is never touched by the mapper; `dr_filepath.desc` is preserved by its UPSERT).
-The boot `## CONNECTIONS` block renders the section index; the descriptions are
-the leaves a shell queries once it has narrowed to a section.
+Both authored layers survive the remap (`dr_section` is never touched by the
+mapper; `dr_filepath.desc` is preserved by its UPSERT); neither blocks the
+auto-remap hook. Boot `## CONNECTIONS` renders the section index;
+descriptions are the leaves a shell queries once narrowed to a section.
 
-**1. Sections (`dr_section`)** — author/curate the navigational index. Seeded
-from top-level dirs on first map (one section per dir), so it is non-empty on day
-one; your job is to make it *good*: rename to what shells call the area, split a
-coarse dir into real areas, merge noise, write the one-line `description`.
+**1. Sections (`dr_section`)** — curate the navigational index. Seeded one
+section per top-level dir on first map; make it *good*: rename to what shells
+call the area, split coarse dirs into real areas, merge noise, write the
+one-line `description`.
 
 ```sql
 -- the current index + live file counts:
@@ -666,10 +697,10 @@ ORDER BY s.name;
 -- For each row: DELETE (area gone) or UPDATE path_prefix (area renamed).
 ```
 
-**2. Descriptions (`dr_filepath.desc`)** — fill per-file one-liners (≤100 chars).
-Run the worklist every session and describe every NULL before you finish — this
-is not optional. They are queried by working shells *within a chosen section*
-(via `surface_catalogue`), never bulk-loaded at boot.
+**2. Descriptions (`dr_filepath.desc`)** — per-file one-liners, ≤100 chars.
+Run the worklist every session; every run ends with zero NULLs — not optional.
+Queried by working shells within a chosen section (`surface_catalogue`), never
+bulk-loaded at boot.
 
 ```sql
 -- WORKLIST — undescribed files, most-load-bearing first:
@@ -679,14 +710,13 @@ SELECT path, role FROM dr_filepath WHERE desc IS NULL ORDER BY role, path;
 UPDATE dr_filepath SET desc=''Boot composer — assembles CLAUDE.md from DB state'' WHERE path=''.super-coder/render/compose.py'';
 ```
 
-**3. The product database** — your repo builds an app, and that app has its own
-database, *separate* from the engine memory DB (`.super-coder/shell_db.db`).
-Working shells change them in completely different ways (boot `## DATABASES`) and
-the only per-fork signal of *where* the app DB lives is the map you author — so
-make it unmistakable. The live `.db` is usually gitignored (absent from the map);
-its **schema + migrations are tracked**, so they are the durable anchor. Tag them
-plainly as the *product/app* DB so a shell never mistakes them for engine memory,
-and give them a section if they form an area.
+**3. Product DB** — the app''s own database, separate from engine memory
+(`.super-coder/shell_db.db`); working shells change them in completely
+different ways (boot `## DATABASES`), and the map you author is the only
+per-fork signal of where the app DB lives. The live `.db` is usually
+gitignored (absent from the map); schema + migrations are tracked = the
+durable anchor. Tag them plainly as the product/app DB so no shell mistakes
+them for engine memory; give them a section if they form an area.
 
 ```sql
 -- tag the product DB''s definition (the engine-vs-app split made visible):
@@ -697,77 +727,73 @@ INSERT INTO dr_section (name, path_prefix, description, sort_order)
 VALUES (''App DB'', ''<db dir>/'', ''Product runtime database — schema + migrations (NOT the engine memory DB)'', 7);
 ```
 
-If this fork ships no database of its own, there is nothing to tag — skip it.
+Fork ships no database of its own -> skip.
 
-After a curation pass, your writes are already live in the shared map db —
-done. Serializing them to git (`sc snapshot`) is an **admin/GUI step**: a plain
-`sc snapshot` from a shell is refused by design. Persistence happens via the
-GUI Snapshot button or an admin''s `SC_ADMIN=1 ./sc snapshot`; don''t chase it
-yourself. (Sections are snapshotted; descriptions ride the live DB + survive
-remap, refilled from the worklist if a rebuild drops them.)
+After a curation pass your writes are already live in the shared map db —
+done. NEVER run a plain `sc snapshot` from a shell — it is refused by design;
+persistence = the GUI Snapshot button or an admin''s `SC_ADMIN=1 ./sc
+snapshot`. Don''t chase it. (Sections are snapshotted; descriptions ride the
+live DB + survive remap — refill from the worklist if a rebuild drops them.)
 
 ## Extending the map — semantic extractors
 
-The engine maps the generic 80% on every repo: files, languages, roles, deps,
-env. The **semantic** dimensions — HTTP endpoints (`dr_endpoint`), the app DB
-schema (`dr_db_table`/`dr_db_column`), UI routes/components (`dr_route`/
-`dr_component`) — vary by stack, so the engine can''t extract them generically.
-That is your job, via **extractors**: drop-in Python modules in
-`.sc-state/map_extractors/*.py` that `sc map` discovers and runs after the core
-pass. They are fork-owned (outside the gitignored engine dir, so `sc update`
-never clobbers them); the table *columns* are standardized in the engine
-(`map_schema.sql`), so a working shell''s queries have a stable shape everywhere.
+The engine maps the generic 80% (files, languages, roles, deps, env).
+Semantic dimensions — HTTP endpoints (`dr_endpoint`), app DB schema
+(`dr_db_table`/`dr_db_column`), UI routes/components
+(`dr_route`/`dr_component`) — vary by stack: you extract them via drop-in
+Python modules in `.sc-state/map_extractors/*.py`, discovered + run by
+`sc map` after the core pass. Fork-owned (outside the gitignored engine dir ->
+`sc update` never clobbers them); table *columns* are standardized in the
+engine (`map_schema.sql`) so working-shell queries have a stable shape
+everywhere.
 
-**Adopt one per stack:**
+Adopt one per stack:
 
-1. **Detect the stack** from the map: `SELECT manager, name FROM dr_dependency;`
-   (fastapi? flask? svelte? next?) and the file mix
+1. **Detect the stack:** `SELECT manager, name FROM dr_dependency;`
+   (fastapi? flask? svelte? next?) + the file mix
    (`SELECT lang, COUNT(*) FROM dr_filepath GROUP BY lang`).
 2. **Copy the matching reference** from the engine''s
    `.super-coder/templates/map_extractors/` into `.sc-state/map_extractors/`:
    - `fastapi_endpoints.py` — decorator routes (`@app.get(...)`, Flask `@app.route`) → `dr_endpoint`
    - `sqlite_schema.py` — SQL `CREATE TABLE/VIEW` → `dr_db_table`/`dr_db_column`
    - `sveltekit_routes.py` — filesystem routes + `*.svelte` → `dr_route`/`dr_component`
-   Adapt the `framework` label and file filter to this repo. For a stack none
-   cover (Django URLs, Express, Spring, Rails), copy the closest as a skeleton
-   and rewrite the match — aim for the dominant pattern, not 100%.
-3. **Run + verify:** `sc map`, then check the table populated and the rows look
-   right (`SELECT method, path FROM dr_endpoint LIMIT 10;`).
-4. **Commit** `.sc-state/map_extractors/`. (Snapshotting the authored layer is
+   Adapt the `framework` label + file filter to this repo. Uncovered stack
+   (Django URLs, Express, Spring, Rails) -> copy the closest as a skeleton,
+   rewrite the match — target the dominant pattern, not 100%.
+3. **Run + verify:** `sc map` -> table populated, rows look right
+   (`SELECT method, path FROM dr_endpoint LIMIT 10;`).
+4. **Commit** `.sc-state/map_extractors/`. (Snapshotting the authored layer =
    the admin/GUI step above — not yours to run.)
 
-**The contract** (full version in `templates/map_extractors/README.md`): each
-module defines `extract(con, repo_root, cfg) -> str`. `con` is the live map db
-(dr_filepath is already populated — query it for inputs); the module DELETEs +
-repopulates only its own `dr_*` table(s); returns a one-line summary for the map
-log. Be defensive — `map_repo` guards each extractor, but a module that needs the
-map should never assume a file parses. Static extraction is best-effort: log what
-you skip (dynamic routes, computed paths), never imply full coverage.
+**Contract** (full version: `templates/map_extractors/README.md`): each module
+defines `extract(con, repo_root, cfg) -> str`. `con` = the live map db with
+`dr_filepath` already populated — query it for inputs. DELETE + repopulate
+only your own `dr_*` table(s); return a one-line summary for the map log.
+NEVER assume a file parses — guard yourself even though `map_repo` guards each
+extractor. Static extraction is best-effort: log what you skip (dynamic
+routes, computed paths); never claim full coverage.
 
 ## Shape-change notices — the curation trigger
 
-The git hooks keep the *mechanical* catalogue fresh on their own (paths, langs,
-deps), but a newly-landed file arrives `desc IS NULL` and unsectioned — the
-authored layer above doesn''t fill itself. So working shells **message you** when
-they change the repo''s shape, turning curation from a next-boot *pull* into a
-timely *push*. This is the only inbox traffic you act on as cartographer.
+The hooks keep the mechanical catalogue fresh, but a newly-landed file arrives
+`desc IS NULL` and unsectioned. Working shells message you on shape change so
+curation is a timely push, not a next-boot pull — the only inbox traffic you
+act on as cartographer.
 
-**The notice contract** (what the relay shells send — one source of truth here;
-the relay skills point at this section). A working shell sends, via the
-`messaging` skill, to shortname `cartographer`:
+**Notice contract** (one source of truth — the relay skills point here).
+Sender = the **dev/coder** shell on merge (feature landed, doc written); NOT
+the planner — specs render into a known area and need no curation. Sent via
+the `messaging` skill to shortname `cartographer`:
 
 ```
 --message send cartographer "shape: <what landed> — paths: <region/>; <ref>. curate."
 ```
 
-- Sent by the shell that *lands code shape*: the **dev/coder** shell on merge (new
-  feature implemented, new doc written). NOT the planner — specs render into a
-  known, predictable area and need no semantic curation.
-- The body names **what** changed and **where** (the path region) so your pass is
-  scoped, not a full re-survey. A `documents`/feature ref is welcome but optional.
+Body names **what** changed + **where** (the path region) so your pass is
+scoped, not a full re-survey. A `documents`/feature ref is optional.
 
-**On a notice** — check inbox, then run the existing worklists *scoped to the
-named region*, and mark read:
+**On a notice** — check inbox -> run the worklists scoped to the named
+region -> mark read:
 
 ```sql
 -- 1. the new files this notice is about (scope by the region it named):
@@ -777,23 +803,21 @@ WHERE desc IS NULL AND path LIKE ''region/%'' ORDER BY role, path;
 -- 3. do they form / join a section? curate dr_section if the region is a new area.
 ```
 
-Then `--message mark-read <id>` (see the `messaging` skill) — your curation is
-already live; snapshotting is the admin/GUI step.
-The mechanical remap already ran via the hook; your job on the notice is purely
-the authored layer — describe the new leaves, section a new area. Scope is free:
-`desc IS NULL` already narrows to exactly the uncurated tail.
+Then `--message mark-read <id>` (`messaging` skill). The mechanical remap
+already ran via the hook; your job on the notice = the authored layer only —
+describe the new leaves, section a new area. `desc IS NULL` already narrows to
+exactly the uncurated tail.
 
 ## Stance
 
-- **The map is infrastructure, not a chore for every shell.** You own it so the
-  working shells never think about it. If a working shell is hunting the tree
-  for something the map should know, that''s a signal to heal the map — not to
+- The map is infrastructure, not a chore for every shell. A working shell
+  hunting the tree for something the map should know = heal the map; do not
   teach that shell to map.
-- **Config is the lever, not code.** Tune `map.config.json`; only touch
-  `map_repo.py` if the *mechanism* (a parser, a new role kind) is wrong.
-- **Verify the automation, not just the file.** A written hook that
-  `core.hooksPath` doesn''t point at does nothing. Check the wiring after every
-  setup.',
+- Config is the lever: tune `map.config.json`; touch `map_repo.py` only when
+  the mechanism itself (a parser, a role kind) is wrong.
+- Verify the automation, not just the file: a written hook that
+  `core.hooksPath` doesn''t point at does nothing -> check the wiring after
+  every setup.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -809,25 +833,23 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# configure_winbox — provisioning the Windows Test VM
 
-The admin half of the Windows Test VM capability. You install the build
-toolchain into the operator''s Windows VM and get the **clean snapshot** — the
-one every `windows_devkit` run reverts to — re-baked on top of it. Sibling to
-`self_update` / `migration_management` — infrastructure work only the admin
+Admin half of the Windows Test VM capability: install the build toolchain into
+the operator''s Windows VM, then get the **clean snapshot** — the one every
+`windows_devkit` run reverts to — re-baked on top of it. Sibling to
+`self_update` / `migration_management`: infrastructure work only the admin
 shell does. Grant is explicit, per-fork (`common=0`).
 
-## Scope boundary — what you do NOT do
+## Scope boundary
 
-You do **not** create the VM, install the guest OS, or enable OpenSSH inside it.
-That bootstrap is the operator''s, host-side, once (the engine can''t reach inside
-a fresh OS install). You assume a reachable guest with key auth already working,
-and you provision the *toolchain* on top of it.
+You do NOT create the VM, install the guest OS, or enable OpenSSH inside it —
+that bootstrap is the operator''s, host-side, once. Assume a reachable guest
+with key auth already working; provision the *toolchain* on top of it.
 
-## Your execution plane is the broker — you have no ssh, no virsh
+## Execution plane = the broker — no ssh, no virsh
 
-You run **inside the sandbox**, which holds no SSH key, no `virsh`, and no route
-to the VM — by design (a compromised sandbox must not script the hypervisor or
-read the credential). Every guest operation below goes through the **host-side
-vm-broker** over its unix socket, exactly like `windows_devkit` does:
+The sandbox holds no SSH key, no `virsh`, no route to the VM. Every guest
+operation goes through the host-side **vm-broker** over its unix socket,
+exactly like `windows_devkit`. NEVER fall back to raw `ssh`/`virsh`.
 
 ```bash
 SOCK="$(sc vm-broker-sock)"
@@ -836,9 +858,8 @@ curl -s --unix-socket "$SOCK" http://vm/exec -d ''{"command":"ver"}''   # run in
 curl -s --unix-socket "$SOCK" http://vm/push -d ''{"src":"winget-manifest.json"}''
 ```
 
-If `/health` fails, the broker isn''t up — ask the operator to `./sc launch` (it
-auto-starts when a VM is linked) or `./sc vm-broker-up`. Never fall back to raw
-`ssh`/`virsh`; you don''t have them, and you shouldn''t.
+`/health` fails → broker down → ask the operator to run `./sc launch`
+(auto-starts the broker when a VM is linked) or `./sc vm-broker-up`.
 
 ## Order is the design — provision BEFORE the snapshot
 
@@ -846,62 +867,51 @@ auto-starts when a VM is linked) or `./sc vm-broker-up`. Never fall back to raw
 operator: OS + OpenSSH + key   →   YOU: manifest toolchain + verify (broker)   →   operator: ./sc vm-bake   →   devs run loop
 ```
 
-The clean snapshot is **pristine OS + toolchain**. Every test reverts to it, so
-the toolchain must be baked in. Provision *after* snapshotting and the first
-test hits an empty box. Bump the toolchain → re-run this skill → **re-bake**.
+Clean snapshot = pristine OS + toolchain; every test reverts to it. Provision
+*after* snapshotting → the first test hits an empty box. Toolchain bump →
+re-run this skill → re-bake — an unbaked bump is invisible, every test still
+reverts to the old box.
 
 ## Procedure
 
 1. **Confirm the link + the plane.** `.super-coder/instance.json` `vm` block
-   names the domain, snapshot, and transfer dir. Then `/health`, then
-   `exec {"command":"ver"}` — a green `ver` proves broker → guest end to end.
+   names the domain, snapshot, transfer dir → `/health` returns ok →
+   `exec {"command":"ver"}` returns a Windows version string = broker → guest
+   proven end to end.
 
 2. **Push the fork''s committed manifest into the guest.** The fork commits a
-   `winget export` (e.g. `winget-manifest.json` at the repo root); you supply
-   the *mechanism*, the fork supplies the *package list* — this skill stays
-   generic across forks. `push` stages it into the transfer share the guest has
-   mounted (a drive letter, e.g. `Z:`); then install over `exec`:
+   `winget export` (e.g. `winget-manifest.json` at the repo root) — you supply
+   the mechanism, the fork supplies the package list. `push` stages it into
+   the transfer share the guest has mounted (a drive letter, e.g. `Z:`); then
+   install over `exec`:
 
    ```
    winget import --import-file Z:\winget-manifest.json --accept-package-agreements --accept-source-agreements
    ```
 
-3. **Verify what the MANIFEST installs — not a remembered tool list.** Read the
-   committed manifest and probe each package it actually declares over `exec`
-   (`git --version`, `dotnet --version`, `pwsh -v`, `where.exe wix` — whichever
-   the manifest carries). Verifying tools the manifest doesn''t install fails a
-   faithful import; installing tools the manifest doesn''t declare breaks
-   toolchain-as-code. If the fork *needs* a tool the manifest lacks, the fix is
-   a manifest PR, never an ad-hoc install. (The `windows_devkit` wizard''s
-   `toolchain` probe must also hold — check what it probes for this fork.)
+3. **Verify what the MANIFEST installs — not a remembered tool list.** Read
+   the committed manifest; probe each package it declares over `exec`
+   (`git --version`, `dotnet --version`, `pwsh -v`, `where.exe wix` —
+   whichever the manifest carries), each returning success. NEVER probe a
+   tool the manifest doesn''t install (fails a faithful import) and NEVER
+   install a tool the manifest doesn''t declare (breaks toolchain-as-code) —
+   a tool the fork needs but the manifest lacks = manifest PR, never an
+   ad-hoc install. The `windows_devkit` wizard''s `toolchain` probe must also
+   pass — check what it probes for this fork.
 
-4. **Hand the bake to the operator.** The snapshot is the fork''s trust anchor —
-   every test run reverts to it — so *redefining* it is host-authority only,
-   deliberately not a broker verb (a sandbox that could re-bake could persist
-   tampering across every reset). When your verifies are green, ask the
-   operator to run:
+4. **Hand the bake to the operator.** Redefining the snapshot is
+   host-authority only, deliberately not a broker verb (a sandbox that could
+   re-bake could persist tampering across every reset). All probes green →
+   ask the operator to run:
 
    ```bash
    ./sc vm-bake     # graceful shutdown → delete old snapshot → re-bake OFFLINE
    ```
 
-   One command, idempotent, leaves the guest powered off. Confirm afterwards
-   with the wizard''s `snapshot` check (or a `windows_devkit` reset round-trip).
-
-## Stance
-
-- **Toolchain-as-code.** Install from the committed manifest, never ad hoc —
-  the package set is reproducible and reviewable, and re-provisioning is a
-  re-import, not a memory of what you clicked.
-- **The manifest is the verify list.** Probes derive from what the manifest
-  declares; a skill that checks tools the manifest never installed manufactures
-  failures (and vice versa hides them).
-- **Re-provision means re-bake.** A toolchain bump that isn''t followed by a
-  fresh `./sc vm-bake` is invisible — every test still reverts to the old box.
-- **Verify before the bake.** A snapshot of a half-installed box is a clean
-  snapshot of a broken kit. Green checks first, bake second.
-- **Broker-only.** You never hold the key, never run virsh, never redefine the
-  snapshot. Ask the operator for the one host command instead.',
+   One command, idempotent, leaves the guest powered off. NEVER hand off a
+   bake before the probes are green — a snapshot of a half-installed box is a
+   clean snapshot of a broken kit. Confirm afterwards with the wizard''s
+   `snapshot` check or a `windows_devkit` reset round-trip.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -918,37 +928,40 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   '# database-migrations — change schemas safely
 
 Catalogue skill (opt-in). Two halves: super-coder''s own migration model, and
-general migration safety for the host repo''s database.
+general safety for the host repo''s database.
 
 ## super-coder''s model
-- `schema.sql` = the **current baseline** (full schema). `migrations/*.sql` =
-  **ordered, additive deltas** applied on top; the `schema_migrations` ledger
-  dedups so each runs once. `rebuild` = schema → migrations → snapshot-load.
-- **Never fold a migration back into `schema.sql`** (double-apply). Add a
-  delta as a new numbered migration instead. *(Pre-fork, while there are no
-  downstream forks, editing the baseline directly is acceptable — once forks
-  exist, only additive migrations propagate.)*
-- System content (e.g. the skill catalogue) is seeded by migration + re-seed;
+
+- `schema.sql` = current baseline (full schema). `migrations/*.sql` = ordered,
+  additive deltas applied on top; the `schema_migrations` ledger dedups so
+  each runs once. `rebuild` = schema -> migrations -> snapshot-load.
+- NEVER fold a migration back into `schema.sql` — it double-applies. Add a
+  new numbered migration instead. Exception: pre-fork (no downstream forks
+  yet), editing the baseline directly is acceptable; once forks exist, only
+  additive migrations propagate.
+- System content (e.g. the skill catalogue) = seeded by migration + re-seed;
   per-instance content rides in the snapshot. See `db_map` / `snapshot`.
 
 ## General safety (host repo DBs)
-- **Additive first**: add columns/tables before you read them; deploy code that
-  tolerates both shapes; remove the old shape only after nothing uses it
-  (expand → migrate → contract).
-- **Backfills**: batch large updates (don''t lock the table); make them
-  resumable and idempotent; separate the schema change from the data change.
-- **Nullable or defaulted** new columns on a populated table — a `NOT NULL` with
-  no default fails on existing rows.
-- **Reversibility**: know the rollback for each migration before applying it; a
+
+- **Expand -> migrate -> contract**: add columns/tables before reading them;
+  deploy code that tolerates both shapes; remove the old shape only after
+  nothing uses it.
+- **Backfills**: batch large updates (no table-long lock); make them
+  resumable + idempotent; separate the schema change from the data change.
+- **New columns on a populated table**: nullable or defaulted — `NOT NULL`
+  with no default fails on existing rows.
+- **Reversibility**: know each migration''s rollback before applying it; a
   destructive change (drop/rename) needs a deploy plan, not just a script.
-- **SQLite specifics**: limited `ALTER` — changing a constraint means
-  recreate-and-copy (new table → copy → drop → rename), with `foreign_keys` off
-  during the swap. Renames break FK references; check them.
+- **SQLite**: limited `ALTER` — changing a constraint = recreate-and-copy
+  (new table -> copy -> drop -> rename) with `foreign_keys` off during the
+  swap. Renames break FK references — check them.
 
 ## Stance
-Migrate forward in small, reversible steps. A schema change is a deploy event:
-migrated ≠ deployed — restart the consumer, then verify the running process, not
-just the DB.',
+
+Migrate forward in small, reversible steps. A schema change is a deploy
+event: migrated ≠ deployed — restart the consumer, then verify the running
+process, not just the DB.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -965,66 +978,62 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   '# db_map — super-coder''s DB at a glance
 
 All identity, memory, and content live in the engine DB
-(`.super-coder/shell_db.db`) — but you never touch that file. You read and write
-it **only through the engine API**, via `sc mem`:
+(`.super-coder/shell_db.db`). NEVER touch that file — read and write it only
+through the engine API, via `sc mem`:
 
-- **Read** — `sc mem get <surface>`: your own `state`, `seed`, `lns`,
-  `decisions`, `flags`, `narrative`, `messages`; and the shared planning state
-  `roadmap`, `projects`, `documents`, `tasks`, `shells` (add `--json` for raw).
-  `documents`/`tasks` take `--feature <id>` or `--doc <id>` (and `--doc` on
-  `documents` returns the one doc *with* its body).
-- **Write** — `sc mem <cmd> …` (see `## Common writes` below).
+- **Read** = `sc mem get <surface>`: your own `state`, `seed`, `lns`,
+  `decisions`, `flags`, `narrative`, `messages`; shared planning state
+  `roadmap`, `projects`, `documents`, `tasks`, `shells` (`--json` for raw).
+  `documents`/`tasks` take `--feature <id>` / `--doc <id>`; `--doc` on
+  `documents` returns the one doc *with* its body.
+- **Write** = `sc mem <cmd> …` (see `## Common writes`).
 
-There is **no `sqlite3` path** — not as a fallback, not for "ad-hoc" reads.
-`sc mem` goes through the API and only the API; if the API isn''t wired it
-fails loud rather than writing the DB behind its back. Your identity rides in
-your bearer token — the server resolves token → shell, so you never name a
-shell. The table below is the **data model** behind those surfaces (and what
-each `sc mem` write touches), not a query cheatsheet. Lazy-load: `get` the one
-surface you need, don''t bulk-read.
+There is NO `sqlite3` path — not as a fallback, not for "ad-hoc" reads. If the
+API isn''t wired, `sc mem` fails loud instead of writing the DB behind its
+back. Your identity rides in your bearer token — the server resolves token ->
+shell; never name a shell in a write. The table below = the data model behind
+those surfaces (what each `sc mem` write touches), not a query cheatsheet.
+Lazy-load: `get` the one surface you need, don''t bulk-read.
 
-**Need a read or write `sc mem` doesn''t expose?** That''s a gap to *report*, not
-a reason to reach for the DB — the direct path is closed by design, and a fork
-can''t patch the engine anyway (`sc update` would overwrite it). A missing
-surface is an engine gap that goes **up to the FnB**: open a flag naming the data
-and the use, and surface it. Don''t improvise around the API.
+**Need a read/write `sc mem` doesn''t expose?** Report the gap, don''t reach for
+the DB — the direct path is closed by design, and a fork can''t patch the
+engine (`sc update` would overwrite it). Open a flag naming the data + the
+use, surface it to the FnB (who carries it upstream); message a
+planner-flavor shell too if the fork has one. Until it lands: do what you can
+through the API, flag the rest — NEVER query the DB directly.
 
 ```
 sc mem flag open "[Engine] need to <read|write> <what> — no sc mem surface for it | Blocker for: <your work>"
 ```
 
-The FnB carries it upstream (that''s exactly how `get documents`/`get tasks`
-landed); message a planner-flavor shell too if the fork has one. Until then, do
-what you *can* through the API and flag the rest — never the DB directly.
-
 The repo map (`dr_*`) lives in its own db, `.sc-state/map.db` (see the
-`surface_catalogue` skill). The `dr_*` tables also *exist* in `shell_db.db` but
-are **always empty** there — a `dr_*` query against `shell_db.db` silently
-returns 0 rows instead of erroring, so it looks like an empty map. Never query
-`dr_*` here; this map covers only `shell_db.db`, your memory/identity/content.
+`surface_catalogue` skill). The `dr_*` tables also exist in `shell_db.db` but
+are ALWAYS empty there — a `dr_*` query against `shell_db.db` silently returns
+0 rows instead of erroring. Never query `dr_*` here; this map covers only
+`shell_db.db` (memory/identity/content).
 
 ## Tables
 
 | Table | Holds | Write rule |
 |---|---|---|
 | `shells` | identity core: `mandate`, `system_prompt`, `current_state` (rolling, ~500 chars), `lineage_seed`, `active_archive_id`. (`connections`/`workspace` retired — boot `## CONNECTIONS` is derived from the `dr_*` map, not authored here) | UPDATE in place |
-| `shell_identity_entries` | seed (cap 10) + L&S (`kind=''lns''`, cap 20); triggers enforce caps | INSERT to add; UPDATE `retired_at` to curate out — never edit a seed body (Law 3) |
+| `shell_identity_entries` | seed (cap 10) + L&S (`kind=''lns''`, cap 20); triggers enforce caps | INSERT to add; UPDATE `retired_at` to curate out — NEVER edit a seed body (Law 3) |
 | `shell_decisions` | major decisions | INSERT only; supersede via `parent_decision_id` |
 | `shell_memory_archives` | one row per session; `full_narrative` appended progressively | INSERT at session open; UPDATE narrative |
-| `roadmap` | one row per planned feature; `roadmap_status` is a planning horizon (`brainstorm`→`in_progress`→`next`→`near_term`→`long_term`→`shipped`→`retired`), `sort_order` within a bucket. `shipped` = delivered; `retired` = taken off the board (decided-against / split / absorbed / replaced) without shipping — keep the row. `project_id` (nullable) = the work-stream the feature belongs to; the GUI Flow view groups on it (NULL = Ungrouped) | INSERT/UPDATE |
-| `feature_blockers` | the roadmap''s dependency edges: one row = `feature_id` depends on `blocked_by` (prerequisite must land first). Directed, kept acyclic (the GUI Flow view wires them; the card''s "depends on" picker sets them) | INSERT/DELETE the edge; set the whole set via `sc mem roadmap depends` |
-| `documents` | the content store — specs/docs bodies live here; `frozen=1` on ship (immutable); `render_path` = flat-file target | INSERT a new `seq` per stage; never edit a frozen body |
+| `roadmap` | one row per planned feature; `roadmap_status` = planning horizon (`brainstorm`→`in_progress`→`next`→`near_term`→`long_term`→`shipped`→`retired`), `sort_order` within a bucket. `shipped` = delivered; `retired` = off the board without shipping (decided-against / split / absorbed / replaced) — keep the row. `project_id` (nullable) = the work-stream the feature belongs to; the GUI Flow view groups on it (NULL = Ungrouped) | INSERT/UPDATE |
+| `feature_blockers` | roadmap dependency edges: one row = `feature_id` depends on `blocked_by` (prerequisite lands first). Directed, kept acyclic (GUI Flow view wires them; the card''s "depends on" picker sets them) | INSERT/DELETE the edge; set the whole set via `sc mem roadmap depends` |
+| `documents` | content store — spec/doc bodies; `frozen=1` on ship (immutable); `render_path` = flat-file target | INSERT a new `seq` per stage; NEVER edit a frozen body |
 | `flags` | open + resolved tasks; `feature_id` links a flag to the feature it blocks | INSERT to open; UPDATE `resolved=1` + `resolved_date` to close |
 | `skills` / `shell_skills` | skill catalogue (system, seeded from `assets/skills/` via migration) + per-shell grants | managed by engine; grants via `./sc skill grant/revoke` |
-| `projects` / `project_shells` | project standing + shell linkage; a `projects` row also doubles as a **work-stream** that roadmap features attach to via `roadmap.project_id` (the Flow-view grouping) | UPDATE `standing`; INSERT to add |
+| `projects` / `project_shells` | project standing + shell linkage; a `projects` row also doubles as a work-stream that roadmap features attach to via `roadmap.project_id` (the Flow-view grouping) | UPDATE `standing`; INSERT to add |
 
 `<self>` = your `shell_id` (in the boot doc''s ACTIVE SESSION block).
 
 ## Common writes
 
-Each routes through the engine API and writes to the live shared DB. `sc mem which`
+Each routes through the engine API to the live shared DB. `sc mem which`
 orients; `sc mem <cmd> -h` shows flags. Writes always target your own shell —
-the server resolves it from your token; you never name a shell.
+the server resolves it from your token.
 
 ```
 # current_state (rolling status, not a log — replaces in place):
@@ -1068,9 +1077,8 @@ sc mem oriented                          # mark first-run done (bootstrapped=1)
 
 ## After writing
 
-Nothing more to run — the write is live in the shared engine DB the moment it
-commits, visible to every shell. Persisting it to git is an admin/GUI step, not
-yours.',
+Nothing more to run — the write is live in the shared engine DB on commit,
+visible to every shell. Persisting to git is an admin/GUI step, not yours.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -1086,91 +1094,79 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# docs — author & review documents
 
-In super-coder the **DB owns document bodies** — never loose `.md` files. A
-`documents` row is the source; `sc render` writes the read-only flat copy to
-`specs_sc/` / `docs_sc/`, and the GUI opens it rendered in md-converter.
+The DB owns document bodies: a `documents` row is the source — NEVER author a
+loose `.md` file as the canonical body. `sc render` writes the read-only flat
+copy to `specs_sc/` / `docs_sc/`; the GUI opens it rendered in md-converter.
 
 | kind | lives on | meaning |
 |---|---|---|
-| `spec` | the **Roadmap** (the dev cycle) | a working spec for a feature; a feature can hold several at once; **freezes on ship** |
+| `spec` | the **Roadmap** (the dev cycle) | working spec for a feature; a feature can hold several at once; **freezes on ship** |
 | `doc` | the **Docs** tab | documentation; not part of the spec lifecycle |
 
 `<self>` = your shell_id.
 
 ## One feature, many specs
 
-A feature (the `roadmap` row) is the umbrella, and it exists from `brainstorm`
-onward — before any spec is written. **Specs hang off the feature, not off each
-other:** a feature can hold several unfrozen specs at once (the working pile),
-each a `documents (kind=''spec'')` row, ordered by `seq`. There are no
-feature-to-feature links and no second roadmap row for related work — related
-work is just another spec under the same feature.
+Feature = the `roadmap` row; exists from `brainstorm` onward, before any spec.
+Specs hang off the feature, not off each other: several unfrozen specs per
+feature, each a `documents (kind=''spec'')` row, ordered by `seq`. No
+feature-to-feature links; no second roadmap row for related work — related
+work = another spec under the same feature. Freeze = the ship-time record of
+what was built to; it never gates the feature''s other specs.
 
-A spec stays unfrozen until it ships; freeze is the ship-time record of what we
-built to, and it never gates the feature''s other specs. So at any moment a
-feature''s specs are in one of three states:
-
-| state | how to tell | meaning |
+| state | test | meaning |
 |---|---|---|
 | **shipped** | `frozen = 1` | delivered; immutable record |
-| **active** | unfrozen **and** has rows in `spec_tasks` | the spec being built now |
-| **backlog** | unfrozen, no task plan yet | the pile, ordered by `seq` |
+| **active** | unfrozen + has rows in `spec_tasks` | the spec being built now |
+| **backlog** | unfrozen, no task plan | the pile, ordered by `seq` |
 
-The **doc** (`kind=''doc''`) is the feature''s readable face — write it when the
-first spec ships, under the same `feature_id`. It is a sibling of the specs, not
-a parent they point at.
+The **doc** (`kind=''doc''`) = the feature''s readable face — write it when the
+first spec ships, under the same `feature_id`. Sibling of the specs, not a
+parent.
 
-## Every feature belongs to a work-stream — assess it
+## Assess the work-stream on every feature
 
-A feature attaches to a **work-stream** (a `projects` row) via
-`roadmap.project_id`; the GUI **Flow view groups on it**, and `NULL` shows as
-**Ungrouped**. An unassigned feature is invisible to the Flow view''s grouping —
-so a roadmap of Ungrouped features is a roadmap with no flows. **Whenever you
-create a feature or author/update a spec, assess the work-stream** as part of the
-same act (it''s a planning decision, like the stage):
+A feature attaches to a work-stream (`projects` row) via `roadmap.project_id`.
+The GUI Flow view groups on it; `NULL` shows as Ungrouped = invisible to the
+grouping. On every feature create / spec author / spec update, assess the
+work-stream in the same act:
 
 ```
-# existing work-streams (pick the one this feature belongs to):
-sc mem get projects
-# is this feature already assigned? — read its row''s project_id:
-sc mem get roadmap
+sc mem get projects   # existing work-streams — pick the fit
+sc mem get roadmap    # this feature''s current project_id
 ```
 
-Then:
-- **New feature** → create it already assigned:
-  `sc mem roadmap add "<title>" --project <shortname>`
-- **Existing + Ungrouped** → assign it:
-  `sc mem roadmap project <feature_id> <shortname>`
-- **No fitting work-stream exists yet** → create one, then assign:
-  `sc mem project add <shortname> "<title>" --purpose "…"`
-- **Already correctly assigned** → **no-op**; don''t churn it.
+| case | action |
+|---|---|
+| new feature | create pre-assigned: `sc mem roadmap add "<title>" --project <shortname>` |
+| existing + Ungrouped | `sc mem roadmap project <feature_id> <shortname>` |
+| no fitting stream | `sc mem project add <shortname> "<title>" --purpose "…"` -> then assign |
+| already correctly assigned | no-op — don''t churn |
 
-**Auto-assign when the stream is obvious** (only one plausible fit, or it clearly
-belongs to an existing stream). **Surface to the FnB only when ambiguous** —
-several streams could fit, or the feature implies a new stream you''re unsure how
-to name. Exempt, as with stages: work that isn''t a feature/spec (a quick fix)
-needs no work-stream.
+Auto-assign when only one plausible fit / it clearly belongs to an existing
+stream. Surface to the FnB only when ambiguous — several streams fit, or a
+new stream you''re unsure how to name. Exempt (as with stages): work that
+isn''t a feature/spec (a quick fix) needs no work-stream.
 
 ## Review first
 
-Before writing, see what exists — don''t duplicate, and don''t re-litigate:
+Before writing — don''t duplicate, don''t re-litigate:
 ```
 sc mem get documents      # every spec/doc in the engine DB (kind, seq, frozen, task_count)
-sc mem get decisions      # active-decision index — already settled? (<id> = full row + rationale; --all incl. superseded)
-sc map-sql "SELECT path FROM dr_filepath WHERE role=''doc'';"  -- repo''s own docs (map db)
+sc mem get decisions      # active-decision index (<id> = full row + rationale; --all incl. superseded)
+sc map-sql "SELECT path FROM dr_filepath WHERE role=''doc'';"   # repo''s own docs (map db)
 ```
 
-If the spec you''re about to write touches a recorded decision, honor it or
-supersede it **explicitly** — say so in the spec, and record the new decision
-with `sc mem decision "…" --parent <old_id>`. Never silently re-decide a
-settled choice.
+Spec touches a recorded decision -> honor it, or supersede explicitly: say so
+in the spec + record `sc mem decision "…" --parent <old_id>`. NEVER silently
+re-decide a settled choice.
 
 ## Author
 
-Write through `sc mem doc add` — it routes through the engine API, `--body-file` reads
-the markdown from a file (no shell-escaping a long body), `--seq` auto-increments
-within `(feature, kind)`, and it renders + snapshots for you (the render/snapshot
-pipeline this rides on is the `snapshot` skill):
+Write through `sc mem doc add` (routes through the engine API): `--body-file`
+reads the markdown from a file (no shell-escaping a long body); `--seq`
+auto-increments within `(feature, kind)`; it renders + snapshots for you
+(pipeline = the `snapshot` skill):
 ```
 # a doc against a feature (kind=''doc''); DB owns the body:
 sc mem doc add "…" --kind doc --feature <id> --body-file ./draft.md --render-path docs_sc/….md
@@ -1181,9 +1177,9 @@ sc mem doc add "…" --kind spec --feature <id> --body-file ./draft.md --render-
 
 ## Revise before freeze
 
-While a doc is still unfrozen, revise it in place — no new row, no seq bump.
-Pass any of `--title` / `--body-file` / `--render-path`; it renders + snapshots
-like `add`. Refused once frozen (open a new spec instead — see below):
+Unfrozen -> edit in place: no new row, no seq bump. Pass any of `--title` /
+`--body-file` / `--render-path`; renders + snapshots like `add`. Frozen ->
+refused; open a new spec under the same feature instead:
 ```
 sc mem doc edit <document_id> --body-file ./draft.md
 sc mem doc edit <document_id> --title "New title" --render-path specs_sc/….md
@@ -1191,64 +1187,58 @@ sc mem doc edit <document_id> --title "New title" --render-path specs_sc/….md
 
 ## Freeze + document on ship — the planner''s handoff
 
-Shipping a feature is a **two-shell** act, and the split keeps `shipped` honest:
+Shipping is a two-shell act (keeps `shipped` honest):
 
-- the **dev** flips the feature to `roadmap_status = shipped` and opens a
-  **docs-pending** flag (see the `spec` skill, Step 5) — so `shipped` never
-  silently claims a doc that doesn''t exist yet;
-- the **planner** picks up that flag and does the paperwork: **freeze the spec,
-  write the doc, close the flag.**
+- **dev**: flips `roadmap_status = shipped` + opens a **docs-pending** flag
+  (`spec` skill, Step 5) — `shipped` never silently claims a doc that doesn''t
+  exist yet.
+- **planner**: on that flag (arrives in your inbox per the `flags` skill), do
+  the paperwork:
 
-As the planner, on a docs-pending flag (it arrived in your inbox per the `flags`
-skill):
-
-1. **Freeze the shipped spec** — records what we built to, immutable thereafter.
-   The feature''s other specs stay unfrozen and unaffected; never edit a frozen one
-   (open a new spec under the same feature instead). The GUI and render layer both
-   refuse edits to frozen docs:
+1. **Freeze the shipped spec** — immutable thereafter; the feature''s other
+   specs stay unfrozen and unaffected. NEVER edit a frozen spec (open a new
+   spec under the same feature); the GUI and render layer both refuse edits
+   to frozen docs:
    ```
    sc mem doc freeze <document_id>
    ```
-2. **Read the shipped code, then write the doc.** The doc is written from
-   interpretation of the code as it actually shipped — not from the spec body.
-   Drift happens during production: decisions get made, scope adjusts, edge cases
-   land differently than planned. The spec captures the intent; the code is the
-   truth. Read the implementation first, then write what it does:
+2. **Read the shipped code, then write the doc** — from the code as it
+   actually shipped, NOT from the spec body. The spec is intent; the code is
+   truth (drift lands during production). Read the implementation first,
+   write what it does:
    ```
    sc mem doc add "<feature> — how it works" --kind doc --feature <id> --body-file ./draft.md --render-path docs_sc/<slug>.md
    ```
-3. **Close the docs-pending flag** with a note pointing at the doc:
+3. **Close the docs-pending flag** pointing at the doc:
    ```
    sc mem flag close <flag_id> --notes "Spec frozen; doc <document_id> written → docs_sc/<slug>.md"
    ```
 
-Until step 3, `shipped` + the open flag is the truthful interim state: delivered,
+Until step 3, `shipped` + open flag = the truthful interim state: delivered,
 doc pending.
 
 ## View
 
-Open any doc rendered: the GUI''s "open in md-converter ↗" (Roadmap card or Docs
-tab) — the body rides in the URL, no upload. For long-form authoring, write the
-markdown to the `body` and let the render + md-converter handle presentation.
+GUI "open in md-converter ↗" (Roadmap card / Docs tab) opens any doc rendered
+— the body rides in the URL, no upload. Long-form authoring: write the
+markdown to `body`; render + md-converter own presentation.
 
 ---
 
 # Authoring format (themed-markdown)
 
-The `body` you write **is** themed-markdown — the format md-converter renders.
-**Your job is structure; styling is the renderer''s job.** Never write visual
-instructions (colors, fonts, sizes, themes). Apply the four semantic classes;
-the theme picks the actual colors.
+The `body` you write IS themed-markdown — the format md-converter renders.
+Your job = structure; styling = the renderer''s job. NEVER write visual
+instructions (colors, fonts, sizes, themes) — apply the four semantic
+classes; the theme picks colors.
 
-Use **only** the constructs below. Anything else either drops silently or breaks
-the render.
+Use ONLY the constructs below — anything else drops silently or breaks the
+render.
 
-`req` = required · `opt` = optional · `≤N` = soft character cap (over-cap wraps
-awkwardly or overflows a fixed UI slot).
+`req` = required · `opt` = optional · `≤N` = soft character cap (over-cap
+wraps awkwardly / overflows a fixed UI slot).
 
 ## Frontmatter
-
-Author these in the body''s frontmatter:
 
 ```
 ---
@@ -1268,10 +1258,10 @@ purpose: Brief description
 | `project` | opt | ≤40 |
 | `purpose` | opt | ≤40 |
 
-`date`/`project`/`purpose` → footer meta cards. **`sc render` injects
-`feature`, `roadmap_status`, `frozen`, `rendered_by`, `source` on top of these
-— don''t write those yourself.** Never use comma-separated tags (`tags: a, b`);
-always a YAML list.
+`date`/`project`/`purpose` -> footer meta cards. `sc render` injects
+`feature`, `roadmap_status`, `frozen`, `rendered_by`, `source` on top —
+NEVER write those yourself. Tags = YAML list only; comma-separated
+(`tags: a, b`) breaks.
 
 ## Structure
 
@@ -1279,17 +1269,17 @@ always a YAML list.
 |---|---|---|
 | `# Title` | doc title (opt; falls back to `frontmatter.title`) | — |
 | `## Section` | sidebar tab | ≤28 |
-| `### Heading` | subsection → `<h3>` | ≤80 |
+| `### Heading` | subsection -> `<h3>` | ≤80 |
 
 H4–H6 ⛔.
 
-**Tab rule:** every H2 = one tab. Content between two H2s belongs to the first.
-Content between H1 and the first H2 is **silently dropped** — put intro under an
-H2 (e.g. "Overview"). Single-section docs may omit H2s (whole doc = one tab).
+**Tab rule:** every H2 = one tab; content between two H2s belongs to the
+first. Content between H1 and the first H2 is silently dropped — put intro
+under an H2 (e.g. "Overview"). Single-section docs may omit H2s (whole doc =
+one tab).
 
-**Doc scale:** the app renders every section up-front and re-renders every
-Mermaid on each tab switch. Aim for ≤25 sections and ≤15 Mermaid diagrams; split
-larger material.
+**Doc scale:** ≤25 sections + ≤15 Mermaid diagrams (every section renders
+up-front; every Mermaid re-renders per tab switch) — split larger material.
 
 ## Inline · lists · tables · images · code
 
@@ -1297,19 +1287,19 @@ larger material.
 - Lists: `-` unordered · `1.` ordered · `- [ ]` / `- [x]` tasks
 - Tables: standard GFM pipe tables
 - Images: `![alt](https://url/img.png)` — absolute URLs only, descriptive alt
-- Video: a bare video URL **alone on its own line** renders as a player —
-  a `github.com/user-attachments/assets/<id>` URL (paste a video into a GitHub
+- Video: a bare video URL alone on its own line renders as a player — a
+  `github.com/user-attachments/assets/<id>` URL (paste a video into a GitHub
   issue/PR to mint one) or any absolute URL ending `.mp4`/`.webm`/`.mov`/`.ogg`.
-  Don''t wrap it in `![]()` or `[]()` — bare is what triggers the player.
+  NEVER wrap it in `![]()` / `[]()` — bare triggers the player.
 - Code: fenced with a language hint (```` ```python ````)
 
 ## Color classes
 
-`class1`–`class4`, available on callouts, stat cards, mermaid nodes, and linear
-steps. **You choose which class fits each piece by meaning** — the theme decides
-the color. Keep one class per semantic role across the doc (e.g. `class1` =
-primary, `class2` = supporting, `class3` = positive/done, `class4` =
-caution/warning). Consistency > specific choice.
+`class1`–`class4` — on callouts, stat cards, mermaid nodes, linear steps.
+Choose the class by meaning; the theme decides the color. Keep one class per
+semantic role across the doc (e.g. `class1` = primary, `class2` = supporting,
+`class3` = positive/done, `class4` = caution/warning). Consistency >
+specific choice.
 
 ## Callouts
 
@@ -1335,9 +1325,9 @@ label: Active users
 
 | Field | Status | Cap | Notes |
 |---|---|---|---|
-| `value` | req | ≤12 | Short token: `87%`, `1.2M`. Not sentences. |
-| `label` | req | ≤28 | One short noun phrase. |
-| `description` | opt | one short line | Omit if no signal. |
+| `value` | req | ≤12 | short token (`87%`, `1.2M`) — not sentences |
+| `label` | req | ≤28 | one short noun phrase |
+| `description` | opt | one short line | omit if no signal |
 
 Layout: 2 per row; trailing odd card spans the row.
 
@@ -1350,16 +1340,16 @@ graph LR
 ```
 ````
 
-Class via `:::classN` on nodes. The app injects `classDef` — **don''t** write
-`classDef`, `fill:`, or any style directive. Node label cap ≤24 (Mermaid
-auto-sizes nodes; long labels balloon them).
+Class via `:::classN` on nodes. The app injects `classDef` — NEVER write
+`classDef`, `fill:`, or any style directive. Node label cap ≤24 (long labels
+balloon auto-sized nodes).
 
-**Quote labels with special characters.** Unquoted node text is parsed as
-Mermaid grammar, not literal text. Any label containing `/`, `(`, `)`, `*`, `[`,
-`]`, `{`, `}`, `<`, `>`, `#`, `:`, `;`, or a quote **must** be wrapped in double
-quotes inside the brackets — otherwise the diagram throws *"Syntax error in
-text"* and renders nothing. Notably `A[/text/]` is the parallelogram shape, so a
-literal path like `/lease/mail/*` breaks unless quoted.
+**Quote labels with special characters** — unquoted node text is parsed as
+Mermaid grammar. Any label containing `/`, `(`, `)`, `*`, `[`, `]`, `{`, `}`,
+`<`, `>`, `#`, `:`, `;`, or a quote MUST be double-quoted inside the brackets
+-> else *"Syntax error in text"* and nothing renders. Notably `A[/text/]` =
+the parallelogram shape, so a literal path like `/lease/mail/*` breaks unless
+quoted.
 
 ```
 GOOD:  AD["/admin/user-credentials/"]:::class3
@@ -1369,7 +1359,7 @@ BAD:   AD[/admin/user-credentials/]      (parsed as a parallelogram shape → er
 ```
 
 Cylinder/stadium shapes are fine as-is — `DB[(secrets.db)]`, `X([ready])` —
-quote only the inner *text*, not the shape brackets.
+quote only the inner text, not the shape brackets.
 
 ## Linear
 
@@ -1378,8 +1368,8 @@ quote only the inner *text*, not the shape brackets.
 Step 1 :::class1 -> Step 2 :::class2 -> Step 3 :::class3
 ```
 ````
-Steps separated by `->`, optional class via `:::classN`. Steps render
-**vertically** — one per row, top→bottom (never horizontal). Step text cap ≤48.
+Steps separated by `->`, optional `:::classN`. Renders vertically — one step
+per row, top→bottom (never horizontal). Step text cap ≤48.
 
 ## Never
 
@@ -1393,21 +1383,21 @@ Steps separated by `->`, optional class via `:::classN`. Steps render
 ## Open in md-converter
 
 A doc whose `body` lives in the DB already opens in the app from the GUI
-("open in md-converter ↗" on the Roadmap/Docs card) — nothing to author there.
+("open in md-converter ↗" on the Roadmap/Docs card) — author nothing there.
 
-When you instead **commit a standalone themed-markdown file** to the repo (a
-README, or a rendered `docs_sc/` page meant to be read on GitHub), drop a
-one-click badge in its preamble — between `# Title` and the first `##`, so it
-shows on GitHub but is dropped from the render (preamble rule):
+When committing a **standalone** themed-markdown file to the repo (a README,
+or a rendered `docs_sc/` page meant to be read on GitHub), drop a one-click
+badge in its preamble — between `# Title` and the first `##` (shows on
+GitHub, dropped from the render by the preamble rule):
 
 ```markdown
 [![Open in md-converter](https://img.shields.io/badge/Open%20in-md--converter-6b46c1?style=flat-square)](https://md-converter.designs-os.com/?url=https://github.com/<owner>/<repo>/blob/<branch>/<path>)
 ```
 
 Fill `<owner>/<repo>/<branch>/<path>` with the file''s GitHub location (any
-subdirectory depth). Public repos only — the badge fetches the raw file in the
-reader''s browser (no server/auth). Destination unknown → keep the placeholders
-and tell the user to fill them.',
+subdirectory depth). Public repos only — the badge fetches the raw file in
+the reader''s browser (no server/auth). Destination unknown -> keep the
+placeholders and tell the user to fill them.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -1417,17 +1407,17 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'flag_sweep',
-  'Admin''s every-session flag reconciliation — auto-close flags whose gating work is provably done, open ship flags for implemented-but-unshipped specs and docs-pending flags for shipped features that lack a doc (and message the planner), and surface the judgment calls to the FnB. Step 1 of the admin standing pass; run it before git_cleanup.',
+  'Admin''s every-session flag reconciliation — auto-close flags whose gating work is provably done, open ship flags for implemented-but-unshipped specs and docs-pending flags for shipped features that lack a doc (message the planner), surface judgment calls to the FnB. Step 1 of the admin standing pass; run before git_cleanup.',
   'substrate',
   NULL,
   0,
   '# flag_sweep — reconcile flags against state
 
-Admin-only. The first leg of your standing every-session pass (then `git_cleanup`,
-then optional `local_skill_management`). Working shells close the flags *their own*
-work clears (boot doc, "Finish before you stop"); this sweep is the backstop — it
-catches the stragglers they dropped and the docs nobody opened a flag for. It runs
-in **two directions**: close what''s provably resolved, open what''s provably missing.
+Admin-only. Leg 1 of the standing every-session pass -> then `git_cleanup` ->
+then optional `local_skill_management`. Working shells close the flags their
+own work clears (boot doc, "Finish before you stop"); this sweep is the
+backstop for the stragglers they dropped + the docs nobody opened a flag for.
+Two directions: close what''s provably resolved, open what''s provably missing.
 
 `<self>` = your shell_id. Resolve the planner once up front:
 
@@ -1451,61 +1441,57 @@ WHERE f.resolved=0 AND COALESCE(f.is_deleted,0)=0
 ORDER BY f.priority, f.flag_id;
 ```
 
-Sort each open flag into exactly one bucket below. **Auto-close only on unambiguous
-evidence** — when in doubt, surface, don''t close.
+Sort every open flag into exactly one bucket (Step 2 / Step 4). Auto-close
+only on unambiguous evidence — any doubt -> Step 4, not a close.
 
 ---
 
 ## Step 2: Auto-close the deterministic ones
 
-Close with `sc mem flag close <flag_id> --notes "…"`. The note must cite the
-evidence — that is the whole point of doing it here instead of guessing.
+Close with `sc mem flag close <flag_id> --notes "…"`. The note MUST cite the
+evidence.
 
-**A. Docs-pending flag, doc now exists.** A `[Docs] … docs pending` flag on a
-feature whose `frozen_docs > 0`:
+**A. Docs-pending flag, doc now exists** = `[Docs] … docs pending` flag on a
+feature with `frozen_docs > 0`:
 ```
 sc mem flag close <flag_id> --notes "Auto: frozen spec doc now exists for feature #<id> (flag_sweep)."
 ```
 
-**B. Ship-blocker, feature now shipped.** A flag of the form `… | Blocker for: <X>`
-whose linked feature''s `roadmap_status` is `shipped` (or later) **and** whose text
-is about that feature shipping / becoming available (not a separate concern that
-merely happens to hang off the same feature):
+**B. Ship-blocker, feature now shipped** = flag of the form
+`… | Blocker for: <X>` + linked feature''s `roadmap_status` is `shipped` (or
+later) + the flag text is about that feature shipping / becoming available. A
+separate concern that merely hangs off the same feature does NOT qualify:
 ```
 sc mem flag close <flag_id> --notes "Auto: blocking feature #<id> (<title>) now shipped (flag_sweep)."
 ```
 
-**C. Ship-drift flag, now shipped *and* documented.** A `[Ship] … not marked
-shipped` flag (Step 3A) covers both halves — mark shipped *and* reconcile the doc —
-so only close it once **both** are true: `roadmap_status` is `shipped` (or later)
-**and** `frozen_docs > 0`. Shipped-but-still-undocumented leaves it open (the doc
-half isn''t done):
+**C. Ship-drift flag, now shipped AND documented** = `[Ship] … not marked
+shipped` flag (opened by Step 3A) covers two halves — mark shipped + reconcile
+the doc — so close only when BOTH hold: `roadmap_status` is `shipped` (or
+later) + `frozen_docs > 0`. Shipped-but-undocumented -> leave open:
 ```
 sc mem flag close <flag_id> --notes "Auto: feature #<id> (<title>) now shipped with a frozen doc (flag_sweep)."
 ```
 
-Do **not** message on close (per the `flags` skill — messages pair with `open`, not
-`close`). Do **not** reopen anything. Do **not** close a flag whose evidence you had
-to infer — that goes to Step 4.
+NEVER message on close (per the `flags` skill — messages pair with `open`).
+NEVER reopen a flag. A close whose evidence you had to infer -> Step 4.
 
 ---
 
 ## Step 3: Open the flags nobody opened
 
-Two upstream gaps drop silently — work that finished but was never marked shipped,
-and shipped work with no doc. They''re sequential: a feature climbs out of 3A (gets
-marked shipped) before 3B can apply. Pick `SC-###` for any open below as the next
-free id (`SELECT display_name FROM flags ORDER BY flag_id DESC LIMIT 5;`).
+Two gaps drop silently, in sequence: 3A (done but never marked shipped)
+precedes 3B (shipped but undocumented) — a feature exits 3A before 3B can
+apply. Pick `SC-###` for any open below = next free id
+(`SELECT display_name FROM flags ORDER BY flag_id DESC LIMIT 5;`).
 
 ### 3A — Implemented but not marked shipped (ship-drift)
 
-The dev is supposed to flip the horizon to `shipped` when Verification passes (the
-`spec` skill, hand-off step) — but the spec sometimes gets built and the flip gets
-missed, so the feature lingers `in_progress` with its work actually done. The
-deterministic signal is a spec whose **Verification task is `done`** while the
-feature is **not** `shipped`. Open a durable `[Ship]` flag — it governs both halves
-of the dropped hand-off (mark shipped **and** reconcile the doc to the spec) and
-lingers until a planner does them.
+The dev flips the horizon to `shipped` when Verification passes (`spec` skill,
+hand-off step) — the flip sometimes gets missed. Deterministic signal = spec''s
+**Verification task `done`** + feature **not** `shipped`. Open a durable
+`[Ship]` flag — it governs both halves of the dropped hand-off (mark shipped +
+reconcile the doc to the spec) and stays open until a planner does both.
 
 ```sql
 -- specs finished (Verification done) on features still short of shipped, with no open ship/docs flag:
@@ -1520,8 +1506,8 @@ WHERE r.roadmap_status NOT IN (''shipped'',''retired'')
       AND (f.description LIKE ''%not marked shipped%'' OR f.description LIKE ''%docs pending%''));
 ```
 
-For each row, open the flag and message the planner (or surface to the FnB if there
-is no planner) — same contract as the `flags` skill:
+Per row: open + message the planner (no planner -> surface to the FnB) — same
+contract as the `flags` skill:
 
 ```
 sc mem flag open "[Ship] <title> implemented, not marked shipped | Blocker for: <title> ship + doc" --name SC-### --priority Medium --feature <feature_id>
@@ -1530,10 +1516,9 @@ sc mem message send <planner-shortname> "flag_sweep: <title> (#<feature_id>) —
 
 ### 3B — Shipped but undocumented (docs-pending)
 
-Devs are supposed to open a docs-pending flag when they ship — but they sometimes
-skip it. Find `shipped` features with no frozen doc **and** no open docs-pending
-flag, and open one so they don''t ship silently undocumented. (Work that''s finished
-but not yet shipped is 3A''s job, not this one — it surfaces there first.)
+Devs open a docs-pending flag when they ship — sometimes skipped. Find
+`shipped` features with no frozen doc + no open docs-pending flag; open one
+per row. (Finished-but-not-shipped is 3A''s job, not this one.)
 
 ```sql
 -- shipped features with no frozen doc and no open docs-pending flag:
@@ -1549,8 +1534,8 @@ WHERE r.roadmap_status = ''shipped''
       AND f.description LIKE ''%docs pending%'');
 ```
 
-For each row, open the flag and message the planner (or surface to the FnB if there
-is no planner) — same contract as the `flags` skill:
+Per row: open + message the planner (no planner -> surface to the FnB) — same
+contract as the `flags` skill:
 
 ```
 sc mem flag open "[Docs] <title> shipped, doc pending | Blocker for: <title> doc" --name SC-### --priority Medium --feature <feature_id>
@@ -1561,32 +1546,30 @@ sc mem message send <planner-shortname> "flag_sweep: <title> (#<feature_id>) is 
 
 ## Step 4: Surface the rest — don''t guess
 
-Everything that isn''t a clean Step-2 close or Step-3 open goes to the FnB as a
-short list (no `send` unless a specific shell owns it): review-failure flags (the
-author dev closes those when the fix lands), FnB-decision flags, blockers whose
+Everything that isn''t a clean Step-2 close / Step-3 open -> short list to the
+FnB (no `send` unless a specific shell owns it): review-failure flags (author
+dev closes those when the fix lands), FnB-decision flags, blockers whose
 resolution you can''t verify from state, anything ambiguous. One line each:
 
 > `SC-042` [High] — <description> · feature #N at <status> · *why I didn''t auto-act*
 
-The FnB or the owning shell closes these with a real note. You only ever auto-act
-on unambiguous evidence.
+The FnB or the owning shell closes these with a real note. Auto-act ONLY on
+unambiguous evidence.
 
 ---
 
 ## Stance
 
-- **Deterministic-only auto-close.** Evidence in the DB, cited in the note, or it
-  surfaces. A wrongly-closed live blocker is worse than a straggler.
-- **You are the backstop, not the owner.** The shell that did the work should close
-  its own flag with the richer "how" note; you sweep what they dropped. Don''t race
-  to close a flag whose owner is still active on that feature.
-- **Both directions, every session.** Close what''s resolved; open what''s missing.
-  An implemented-but-unshipped spec and an undocumented shipped feature are each as
-  much a dropped handoff as an unclosed flag — and the signal is already in the DB
-  (a `done` Verification task, a missing frozen doc), so surfacing them is
-  deterministic, not a guess.
-- **Then move on to `git_cleanup`.** flag_sweep is leg 1 of the pass, not the whole
-  pass.',
+- **Deterministic-only auto-close.** Evidence in the DB + cited in the note,
+  or it surfaces. A wrongly-closed live blocker is worse than a straggler.
+- **Backstop, not owner.** The shell that did the work closes its own flag
+  with the richer "how" note; don''t race to close a flag whose owner is still
+  active on that feature.
+- **Both directions, every session.** An implemented-but-unshipped spec and an
+  undocumented shipped feature are dropped handoffs; the signal is already in
+  the DB (a `done` Verification task, a missing frozen doc) — surfacing them
+  is deterministic.
+- **Then `git_cleanup`.** flag_sweep is leg 1 of the pass, not the whole pass.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -1602,51 +1585,51 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# flags — blockers & follow-ups
 
-A flag is an open question or blocker. Linking it to a `feature_id` makes it that
-feature''s blocker (joined on the roadmap + shown on the Roadmap card and the
-Flags tab). `<self>` = your shell_id.
+flag = open question / blocker. `--feature <id>` set -> the flag is that
+feature''s blocker (joined on the roadmap; shown on the Roadmap card + Flags
+tab). `<self>` = your shell_id. All reads/writes go through `sc mem` (the
+engine API) — there is no `sqlite3` path.
 
 ## Surface
 
 ```
-sc mem get flags          # your open flags (id, name, priority, description) — via the API
+sc mem get flags          # your open flags (id, name, priority, description)
 sc mem get flags --json   # same, as JSON
 ```
 
-(Each flag carries its `feature_id`; cross-reference `sc mem get roadmap` for
-the blocked feature''s title. Reads go through the API — there is no `sqlite3`.)
+Each flag carries its `feature_id`; cross-reference `sc mem get roadmap` for
+the blocked feature''s title.
 
 ## Open
 
-Write through `sc mem` (routed through the engine API):
 ```
 sc mem flag open "[Area] what''s blocked | Blocker for: X" --name SC-001 --priority Medium [--feature <id>]
 ```
-- `--name`: short id (`SC-###`).
-- the description is `[Area] {what} | Blocker for: {what it blocks}`.
-- `--priority`: High / Medium / Low. `--feature`: the feature it blocks (or omit).
 
-### Always pair the open with a message
+- `--name` = short id, format `SC-###`.
+- description format = `[Area] {what} | Blocker for: {what it blocks}`.
+- `--priority` = High / Medium / Low. `--feature` = the feature it blocks (omit if none).
 
-A flag sitting in the DB that no one is told about isn''t a handoff — it''s a note
-to yourself. **Every flag you open also sends a message to whoever clears it**, so
-the work lands in their inbox on their next boot (see the `messaging` skill):
+### Pair every open with a message
+
+Every `flag open` -> a `message send` to whoever clears it (see the
+`messaging` skill), so the work lands in their inbox on their next boot:
 
 ```
 sc mem message send <shortname> "Opened SC-### — <one line> (Blocker for: <x>)."
 ```
 
-Resolve the recipient by what the flag blocks:
+Recipient = whoever the flag blocks:
 
 | Flag is about | Message |
 |---|---|
 | docs pending after ship | the **planner** |
 | a review failure on a diff | the **author dev** |
 | a blocker on another shell''s work | **that shell** |
-| an FnB decision, or no shell owns it | **surface to the FnB** (no `send`) |
+| an FnB decision / no shell owns it | **surface to the FnB** (no `send`) |
 
-Idempotent: pair the message with the *open*. Don''t re-message a flag that''s
-already open, and don''t message on `close`.
+Message pairs with the *open* only: NEVER re-message a flag that is already
+open; NEVER message on `close`.
 
 ## Resolve
 
@@ -1654,13 +1637,14 @@ already open, and don''t message on `close`.
 sc mem flag close <flag_id> --notes "…"
 ```
 
+`--notes` states *how* it was resolved — that''s the trail.
+
 ## Stance
 
-Open a flag the moment something is blocked or needs follow-up — don''t hold it in
-your head. Resolve with a note saying *how*, so the trail is legible. Open flags
-on a feature are its blockers; clear them before calling the feature done. **An
-opened flag always rides out on a message** to whoever clears it — a flag nobody
-is told about is a dropped handoff.',
+Open a flag the moment something blocks or needs follow-up — don''t hold it in
+your head. Open flags on a feature = its blockers; clear them all before
+calling the feature done. An opened flag with no message sent = a dropped
+handoff.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -1670,176 +1654,90 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'git',
-  'Git conventions for a super-coder shell — one repo, one cwd. Branch before committing, open PRs (never merge without the FnB''s OK), attribute commits per-shell. Use before any git work.',
+  'Git conventions for a super-coder shell — one repo, one cwd. Sync the base before work, branch before committing, open PRs (never merge without the FnB''s OK), attribute commits per-shell. Use before any git work.',
   'substrate',
   NULL,
   0,
   '# git — version control, the super-coder way
 
-A super-coder shell works **one repo at its root** — no cross-repo confusion, so
-plain `git` (cwd = repo root) is safe. The discipline:
+One repo at its root -> plain `git` (cwd = repo root) is safe.
 
-**Operate on the project, never the engine.** Your project is this repo —
-everything except `.super-coder/`. The engine is a gitignored, materialized
-dependency (refreshed by `sc update`); don''t commit it or edit it as if it
-were your code. Engine changes are authored upstream in super-coder.
+Project = this repo minus `.super-coder/`. Engine = `.super-coder/` — gitignored, materialized by `sc update`, authored upstream in super-coder. NEVER commit or edit anything under `.super-coder/`.
 
-## Sync before you start — a hard pre-code gate
+## Sync before you start — hard pre-code gate
 
-**Before you touch code, reconcile your own tree.** Every session, and again
-before each new unit of work — not "when convenient." This is *your* job, not the
-admin''s; a shell that self-syncs is a shell the admin never has to clean up after.
+Run the gate every session + before each new unit of work. `shell/<shortname>` = a moving base pinned to `origin/main`, not a content branch — cut feature branches from it. A stale base -> you read code that no longer exists + your PRs conflict on arrival.
 
-Your `shell/<shortname>` branch is a **moving base pinned to `origin/main`**,
-not a content branch — work happens on feature branches cut from it. A worktree
-is born at first-boot HEAD and drifts as other shells'' PRs merge; a stale base
-means you read code that no longer exists and your PRs conflict on arrival.
+The launcher auto-syncs at boot when provably nothing can be lost (on base branch + clean tree + no local-only commits). Read the `sync:` line in ACTIVE SESSION: auto-synced + nothing done since -> current, carry on. Says **NOT auto-synced** / you''re mid-session about to start new work -> run:
 
-The launcher checks drift at every boot and **auto-syncs when provably nothing
-can be lost** (on the base branch, clean tree, no local-only commits). Read the
-`sync:` line in ACTIVE SESSION above. If it auto-synced and you''ve done nothing
-since, you''re current — carry on. Otherwise — it says **NOT auto-synced**, or
-you''re mid-session about to start new work — run the gate yourself:
+1. `git fetch origin main && git rev-list --count HEAD..origin/main` -> 0 = carry on.
+2. Behind -> take stock BEFORE touching anything: `git status` (uncommitted) + `git rev-list origin/main..HEAD` (unmerged commits) + `git branch --no-merged origin/main` (unlanded branches).
+3. Anything local -> surface to the FnB first: list the commits/files, ask land / stash / discard. No sync without their call (soft gate).
+4. Clean (or FnB said go) -> `git checkout shell/<shortname> && git reset --hard origin/main`. NEVER `git pull`/merge on the base — merge bubbles accumulate + your squash-merged work replays as conflicts.
+5. Reset only the base, never a feature branch. Stale feature branch -> `git rebase origin/main`.
 
-1. `git fetch origin main && git rev-list --count HEAD..origin/main` — behind
-   count. Zero → carry on.
-2. Behind → take stock of local state BEFORE touching anything:
-   `git status` (uncommitted), `git rev-list origin/main..HEAD` (unmerged
-   commits), `git branch --no-merged origin/main` (unlanded branches).
-3. Anything local → **surface it to the FnB first**: list the commits/files and
-   ask — land it, stash it, or discard? No sync without their call (soft gate).
-4. Clean (or FnB said go) → `git checkout shell/<shortname> && git reset --hard
-   origin/main`. **Never `git pull`/merge on the base branch** — merge bubbles
-   accumulate forever, and your own squash-merged work replays as conflicts.
-5. Never reset a *feature* branch to `origin/main` — only the base. A stale
-   feature branch gets `git rebase origin/main` if it must catch up.
+## Branch -> commit -> push -> PR -> stop
 
-## Branch → commit → push → PR → stop
-
-1. **Never commit straight to the default branch.** Branch first:
-   `git checkout -b <type>/<short-desc>` (feat/fix/chore/docs).
-   *Admin-flavor exception:* the admin shell boots in the repo root on `main`
-   and maintains it directly (engine updates, migrations, applying approved
-   patches) — the branch-guard exempts it. If that''s you, commit to main is
-   your mandate; start each session with `git pull --ff-only` so you maintain
-   the real main. Every other shell branches first, always.
-2. Commit in logical units. End the message with your shell''s attribution so
-   parallel shells'' work stays legible:
+1. NEVER commit to the default branch. Branch first: `git checkout -b <type>/<short-desc>` (feat/fix/chore/docs). *Admin-shell exception:* it boots at the repo root on `main`, exempt from the branch-guard; committing to main is its mandate (engine updates, migrations, approved patches) and it starts each session with `git pull --ff-only`. Every other shell branches, always.
+2. Commit in logical units. End every message with your shell''s trailer:
    ```
    Co-Authored-By: <shell display_name> (super-coder) <noreply@…>
    ```
-3. Push, open a **PR**, then **stop**. **Do not merge** without an explicit
-   directive from the FnB — opening is the default, merging is a separate gate.
+3. Push -> open a PR -> stop. Do NOT merge without an explicit FnB directive — opening is the default, merging is a separate gate.
 
-## Merging a stack (when the FnB has you land one)
+## Merging a stack (only when the FnB hands you one)
 
-Merging stays the FnB''s call (above). When they *do* hand you a stack to land,
-merge **bottom-up, retargeting before each merge — never rely on GitHub''s
-auto-retarget**:
+Merge bottom-up, retargeting before each merge — never rely on GitHub''s auto-retarget:
 
-1. Check the stack is clean: `gh pr view <n> --json mergeable,mergeStateStatus`.
-2. Merge the lowest PR: `gh pr merge <low> --squash --delete-branch`.
-3. **Before** the next merge, re-root it onto `main`: `gh pr edit <next> --base
-   main`. Deleting the merged base otherwise orphans the PR above it (GitHub
-   closes it `CONFLICTING`, base ref gone).
-4. Re-check that PR is `MERGEABLE`, then merge. Repeat up the stack.
+1. `gh pr view <n> --json mergeable,mergeStateStatus` -> clean.
+2. `gh pr merge <low> --squash --delete-branch`.
+3. BEFORE the next merge: `gh pr edit <next> --base main` — deleting the merged base otherwise orphans the PR above it (GitHub closes it `CONFLICTING`, base ref gone).
+4. Re-check `MERGEABLE` -> merge. Repeat up the stack.
 
-If a PR was already orphaned (its base was deleted under it), nothing is lost —
-the head branch still holds the commits. Recreate the base ref so the *same* PR
-can reopen, rather than rebuilding it:
+PR already orphaned (base deleted under it) -> the head branch still holds the commits; reopen the SAME PR, don''t rebuild:
 
-1. `git push origin <merged-sha>:refs/heads/<deleted-branch>`
-   (`<merged-sha>` = `gh pr view <merged-pr> --json headRefOid`).
-2. `gh pr reopen <closed-pr>` → `gh pr edit <closed-pr> --base main`.
-3. Verify `MERGEABLE`, then delete the recreated branch again.
+1. `git push origin <merged-sha>:refs/heads/<deleted-branch>` — `<merged-sha>` = `gh pr view <merged-pr> --json headRefOid`.
+2. `gh pr reopen <closed-pr>` -> `gh pr edit <closed-pr> --base main`.
+3. Verify `MERGEABLE` -> delete the recreated branch again.
 
 ## Finish before you stop
 
-The bookend to "sync before you start." **Before you go dormant, land or surface
-your own work — don''t leave a dirty or unpushed tree for the admin to adopt.** A
-worktree left with uncommitted or unpushed work is exactly what forces the admin''s
-`git_cleanup` to map attribution, check your liveness, and commit on your behalf.
-Self-finish and that whole tier disappears.
+Bookend to the sync gate. At end of session: `git status` (uncommitted) + `git rev-list origin/<base>..HEAD` (unpushed) -> resolve every hit:
 
-At end of session, take stock — `git status` (uncommitted), `git rev-list
-origin/<base>..HEAD` (unpushed) — and resolve it:
+1. Real work -> commit (attributed, trailer above) + push + open the PR. Don''t skip because the session is ending.
+2. Throwaway / experiment -> discard deliberately: `git restore` / `git stash`.
+3. Genuinely unsure -> surface to the FnB + leave it committed-and-pushed on a branch — never sitting uncommitted.
 
-1. **Real work** → commit it (attributed, see above), push, open the PR. That''s
-   the normal flow; just don''t skip it because the session is ending.
-2. **Throwaway / experiment** → discard it deliberately (`git restore` /
-   `git stash`), so the tree is clean.
-3. **Genuinely unsure** → surface to the FnB and leave it committed-and-pushed on
-   a branch (never just sitting uncommitted) — captured work is recoverable; an
-   abandoned dirty worktree is the admin''s problem.
-
-Leave your tree either **clean** or **on a pushed branch with a PR**. Nothing
-half-done waiting for someone else to finish.
+Pass = tree clean, or on a pushed branch with a PR. A dirty/unpushed tree forces the admin''s `git_cleanup` to map attribution, check liveness, and commit on your behalf.
 
 ## After a merge — clean up local
 
-Once the FnB merges your PR, tidy local so stale branches don''t accumulate:
+Only after the PR is merged:
 
-1. Re-pin your base onto the merged commit. In a worktree you **cannot**
-   `git checkout main` — main is checked out at the repo root, and git refuses
-   a branch already checked out in another worktree. Instead:
-   `git checkout shell/<shortname> && git fetch origin && git reset --hard
-   origin/main`. (Admin shell, repo root: `git pull --ff-only` on main.)
-2. Delete the merged branch: `git branch -d <branch>`. If it was
-   **squash-merged**, git won''t recognize it as merged and `-d` refuses — confirm
-   the PR shows *merged* on the remote, then `git branch -D <branch>`.
-3. `git fetch --prune` — drop remote-tracking refs for branches deleted upstream.
+1. Re-pin the base. In a worktree `git checkout main` fails (main is checked out at the repo root; git refuses a branch checked out elsewhere) -> `git checkout shell/<shortname> && git fetch origin && git reset --hard origin/main`. Admin at repo root: `git pull --ff-only` on main.
+2. `git branch -d <branch>`. Squash-merged -> `-d` refuses (commits aren''t ancestors of main); confirm the PR shows *merged* on the remote -> `git branch -D <branch>`.
+3. `git fetch --prune`.
 
-Only after the PR is merged. Never delete a branch carrying unmerged, un-PR''d
-work — a deleted branch with no PR is lost work.
+NEVER delete a branch carrying unmerged, un-PR''d work — no PR = lost work.
 
-## Don''t commit the engine or rebuilt/derived files
+## Never commit the engine or derived files
 
-The whole engine dir is gitignored (`/.super-coder/`) — never force-add anything
-under it. Also gitignored + regenerated: `CLAUDE.md`, `AGENTS.md`,
-`opencode.json`, `.claude/skills/`, and `.sc-state/engine.ref.prev` (the
-ephemeral rollback pointer). From a shell **worktree you commit your project''s
-own files** — the code/config you edited there. You do **not** hand-commit the
-serialized DB state: `.sc-state/content.sql` (the memory the `.db` rebuilds
-from), `.sc-state/engine.ref` (the engine pin), and the tracked `_sc` renders are
-written by `sc` to the **main checkout root** (where the shared engine + DB
-live), not your worktree — so they aren''t even present to stage from your branch.
-Getting that text into the repo is the GUI **Publish** button (or the admin shell
-on `main`) — see ''After DB work'' below. (In the super-coder SOURCE repo only,
-`schema.sql` + `migrations/` are tracked too — there the engine *is* the project.)
+- `/.super-coder/` is gitignored — never force-add anything under it.
+- Gitignored + regenerated, never commit: `CLAUDE.md`, `AGENTS.md`, `opencode.json`, `.claude/skills/`, `.sc-state/engine.ref.prev` (ephemeral rollback pointer).
+- From a worktree, commit only your project''s own files. Do NOT hand-commit `.sc-state/content.sql` (serialized DB memory), `.sc-state/engine.ref` (engine pin), or the tracked `_sc` renders — `sc` writes them to the main checkout root, so they aren''t in your worktree to stage. They enter the repo via Publish (below).
+- Exception: in the super-coder SOURCE repo, `schema.sql` + `migrations/` are tracked — there the engine *is* the project.
 
-## After DB work — your `sc mem` write is already saved; Publish puts it in the repo
+## After DB work — `sc mem` is already saved; Publish is separate
 
-Your `sc mem` write is durable the moment it lands: it goes straight into the
-shared engine DB (visible to every shell at once), and a `sc rebuild` restores it
-from the serialized snapshot. There is **no per-shell "save" step** — do **not**
-run `sc snapshot` yourself. Snapshot serializes the shared main tree and refuses
-outside admin/GUI *by design* (`snapshot: refused — serializing to the shared main
-tree is an admin/GUI step`): run from a worktree it would only churn and collide
-with the tree other shells share. Getting that DB text *into the repo* is the
-admin/GUI **Publish** flow (snapshot → render → commit → push → PR on
-`sc_gui_content`) — the GUI **Publish** button, or the admin shell on `main`
-running `SC_ADMIN=1 sc snapshot` (+ `SC_ADMIN=1 sc render` if docs/roadmap/skills
-changed). It also lands at the **main checkout root**, NOT your worktree, so don''t
-try to commit `content.sql` or the `_sc` renders onto your branch — from a
-worktree they aren''t there. Your feature-branch PRs carry your project files; the
-serialized DB content is published separately. See the `snapshot` skill.
+An `sc mem` write lands in the shared engine DB immediately (visible to every shell) and `sc rebuild` restores it from the serialized snapshot — there is no per-shell save step. NEVER run `sc snapshot` from a worktree — it refuses by design (`snapshot: refused — serializing to the shared main tree is an admin/GUI step`).
+
+Getting DB text into the repo = the Publish flow (snapshot -> render -> commit -> push -> PR on `sc_gui_content`): the GUI **Publish** button, or the admin shell on `main` running `SC_ADMIN=1 sc snapshot` (+ `SC_ADMIN=1 sc render` if docs/roadmap/skills changed). Output lands at the main checkout root, NOT your worktree — don''t try to commit `content.sql` or `_sc` renders onto your branch. Feature-branch PRs carry project files; DB content publishes separately. See the `snapshot` skill.
 
 ## Notes
 
-- Confirm you''re in the intended repo before destructive ops (`git -C` if ever in
-  doubt).
-- Multi-shell: shells each boot into their own git worktree at
-  `.sc-worktrees/<shortname>/` on branch `shell/<shortname>` — a moving base
-  the launcher keeps pinned to `origin/main` (see ''Sync before you start'').
-  Parallel shells never share a cwd — worktree isolation is automatic. The
-  admin shell is the one exception: it boots in the repo root on `main`.
-- Preview UI work: because you edit in your worktree, your changes do NOT show on
-  the fork''s main dev server. `sc preview` runs a router that serves every
-  shell''s worktree UI live (HMR) on the fork''s `dev_port`, one subdomain each:
-  `http://<shortname>.localhost:<dev_port>/`. The `post-commit` hook prints your
-  URL after each commit — surface that line to the FnB so they can eyeball the
-  change. If preview isn''t running, start it once from the main checkout:
-  `sc preview`.',
+- Before destructive ops, confirm the repo — `git -C <abs-path>` if ever in doubt.
+- Multi-shell: each shell boots into its own worktree at `.sc-worktrees/<shortname>/` on branch `shell/<shortname>`; the launcher keeps the base pinned to `origin/main` (see the sync gate). Worktree isolation is automatic — no shared cwd. Admin shell = the one exception: repo root on `main`.
+- UI preview: worktree edits do NOT show on the fork''s main dev server. `sc preview` (start once from the main checkout if not running) serves every shell''s worktree UI live (HMR) on the fork''s `dev_port`, one subdomain each: `http://<shortname>.localhost:<dev_port>/`. The `post-commit` hook prints your URL after each commit — surface that line to the FnB.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -1855,51 +1753,20 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# git_cleanup — the act pass over git state
 
-`git_hygiene.py` reads; this acts. It is the mutating sibling of that
-reporting-only script, and it is the **admin shell''s job alone** — the admin is
-the one vantage that sits in the repo root on `main`, sees every worktree on
-disk, and is exempted from the branch-guard. No working shell runs this; a
-working shell tidies only its own worktree via the `git` skill.
+`git_hygiene.py` reads; this acts on its report. **Admin shell only** — the one vantage at the repo root on `main`, seeing every worktree, exempt from the branch-guard. A working shell NEVER runs this; it tidies only its own worktree via the `git` skill.
 
-**What the launcher already does for you.** Since #119, `git_prune.py` deletes
-the *provably-merged* branch subset automatically on every boot (the same
-`stale` set described in Tier A.1), repo-global across the fork''s worktrees — so
-in practice you will often find that tier already clear. This pass remains the
-backstop for everything the automation deliberately won''t touch: merges it could
-not prove (a `gh`-down boot keeps the branch), dirty worktrees, outstanding
-unpushed work, `main` fast-forward, and remote-ref pruning. Don''t be surprised by
-an empty Tier A; do still run the report.
+Governing asymmetry: a MERGED PR = proof a branch is safe to delete; uncommitted work has NO proof it is disposable. Delete only on evidence; preserve by default; discard only on the FnB''s explicit per-item OK. Unsure -> surface, never guess destructively.
 
-**Working shells now self-finish.** The `git` skill makes each shell sync its own
-tree before it builds and land or surface its own work before it stops — so the
-dirty-worktree (Tier C) and unpushed-work (Tier B) cases should be **rare, not
-routine**. When you do find them, treat them as the exception they now are; the
-genuine admin-only residue is the part no working shell can reach: `main`
-fast-forward at the repo root, `gh`-down unprovable merges, remote-ref pruning,
-and trees whose shell is live or indeterminate. A full Tier B/C is a signal a
-shell skipped its finish gate — worth a note back to that shell, not just a
-silent fix.
+Expect the report to be quiet — still run it:
 
-The governing asymmetry — internalize it before you touch anything:
+- Since #119, `git_prune.py` deletes the provably-merged branch set (Tier A.1''s `stale` set, repo-global) at every boot -> Tier A often already clear. This pass = backstop for what automation won''t touch: `gh`-down unprovable merges, dirty worktrees, unpushed work, `main` fast-forward, remote-ref pruning.
+- Working shells self-finish (sync before build, land/surface before stop) -> Tier B/C should be rare. A full Tier B/C = a shell skipped its finish gate -> fix it AND send that shell a note, not a silent fix.
 
-> You can **prove** something is safe to **delete** (its PR shows MERGED).
-> You almost never have proof that uncommitted work is **disposable**.
-> So: delete only on evidence; **preserve by default; discard only on the
-> FnB''s explicit per-item OK.** When unsure, surface — never guess destructively.
+## Investigation order — scripts first, always
 
-## How to investigate — scripts first, always
-
-The two read-only scripts compute the whole state in one efficient pass. Lean on
-them in this order, cheapest-and-most-authoritative first:
-
-1. **The scripts** — `git_hygiene.py` (git state) + `shell_liveness.py` (who''s
-   live). Run them first and *read their output*; don''t re-derive by hand what a
-   single pass already gives you.
-2. **Git history** — when a script''s verdict is ambiguous (a branch''s merge state
-   is `null`, an unexpected dirty file): `git -C <path> log`, `reflog`,
-   `show` to settle it.
-3. **The code / files** — read the working-tree contents last, only when history
-   doesn''t explain what you''re looking at.
+1. Scripts: `git_hygiene.py` (git state) + `shell_liveness.py` (who''s live). Read their output; never re-derive by hand what one pass gives you.
+2. Git history — only when a verdict is ambiguous (`merged: null`, unexpected dirty file): `git -C <path> log` / `reflog` / `show`.
+3. Working-tree contents — last, only when history doesn''t explain it.
 
 ## Step 1 — Read the state (never skip)
 
@@ -1907,127 +1774,81 @@ them in this order, cheapest-and-most-authoritative first:
 python3 .super-coder/scripts/git_hygiene.py --text       # git: dirty/stale/clean
 python3 .super-coder/scripts/shell_liveness.py --text     # who has a live session
 ```
-(Both have a JSON mode — no `--text` — to drive decisions programmatically.)
+Drop `--text` for JSON when driving decisions programmatically.
 
-`git_hygiene` gives you, in one pass: every worktree (path, branch, dirty count,
-sample files, ahead/behind) and every local branch''s staleness (`merged` = true /
-false / null-unknown, with PR number). Do not re-derive any of this by hand —
-consume it. If `gh` was unavailable the JSON says so (`gh_available: false`);
-treat every `merged: null` as **unknown**, not safe.
+- `git_hygiene` -> every worktree (path, branch, dirty count, sample files, ahead/behind) + every local branch''s staleness (`merged` = true / false / null-unknown, with PR number). `gh_available: false` in the JSON -> treat every `merged: null` as unknown, never safe.
+- `shell_liveness` -> which shells have a live harness session right now (read from `/proc` cwd — instant, self-cleaning). Your OWN session shows as the repo-root `is_self` entry — expected, not a blocker; the gate is about OTHER shells (Tier C).
 
-`shell_liveness` tells you which shells have a live harness session *right now*
-(read from `/proc` cwd — instant, self-cleaning, no staleness). You are running
-this, so your OWN session shows up as the repo-root session (`is_self`) — that is
-**expected, not a blocker**. The gate is about *other* shells (see Tier C).
+## Step 2 — Triage into three tiers, act top-down
 
-## Step 2 — Triage into three tiers
+Sort every report item into exactly one tier.
 
-Walk the report and sort every item into exactly one tier. Act top-down.
+### Tier A — auto-safe (act without asking). Only these three:
 
-### Tier A — Auto-safe (evidence-backed; act without asking)
-
-Only these three. Each has hard proof of safety:
-
-1. **Merged-PR branches.** A branch with `merged: true`, `is_base: false`,
-   `checked_out: false`. Squash-merge is the project default, so its commits are
-   *not* ancestors of main and `git branch -d` will refuse — that refusal is
-   expected, not a signal to stop. Confirm the report says MERGED, then:
+1. Merged-PR branches — `merged: true` + `is_base: false` + `checked_out: false`:
    ```bash
    git branch -D <branch>
    ```
-   `git_prune.py` already does exactly this at boot, so most of these are gone
-   before you look. What survives to here is the residue: branches merged since
-   the last boot, or merged during a `gh`-down boot that couldn''t prove it.
-2. **Dead remote-tracking refs.**
+   Squash-merge is the project default -> `git branch -d` refuses; that refusal is expected, not a stop signal. What survives boot-time `git_prune.py` is residue: merged since the last boot, or merged during a `gh`-down boot.
+2. Dead remote-tracking refs:
    ```bash
    git fetch --prune
    ```
-3. **`main` behind origin, clean tree.** The admin''s root tree only:
+3. `main` behind origin + clean tree (admin''s root tree only):
    ```bash
    git pull --ff-only          # never a plain pull/merge on main — no merge bubbles
    ```
-   If `--ff-only` refuses, main has diverged → that is Tier B/C, not auto.
+   `--ff-only` refuses -> main diverged -> Tier B/C, not auto.
 
-Never auto-delete a `merged: null` (unknown) branch, an `is_base` branch
-(`main` or any `shell/<shortname>` — those are long-lived moving bases), or a
-branch currently checked out in a worktree.
+NEVER auto-delete: a `merged: null` branch, an `is_base` branch (`main` or any `shell/<shortname>` — long-lived moving bases), or a branch checked out in a worktree.
 
-### Tier B — Preserve outstanding work (propose, then act)
+### Tier B — outstanding work (propose -> FnB OK -> act). Preserve, never discard.
 
-Real work that is not yet safely landed. **Default is preserve, never discard.**
+- Unpushed commits (`ahead > 0`): show the FnB `git -C <path> log origin/<base>..HEAD --oneline` first -> propose push + PR.
+- Admin''s OWN root tree dirty: show the diff + proposed message -> on OK, cut a feature branch off main, commit, push, PR (the ordinary `git` skill flow). NEVER discard the admin tree''s dirt without explicit instruction.
 
-- **Unpushed commits** on a branch (`ahead > 0`): real, captured work missing
-  from the remote. Propose push + PR. Show the FnB the commits
-  (`git -C <path> log origin/<base>..HEAD --oneline`) first.
-- **The admin''s OWN root tree is dirty** (uncommitted): cut a feature branch off
-  main, commit, push, PR — the ordinary `git` skill flow. Show the diff and the
-  proposed message; get the OK before committing. Never discard the admin tree''s
-  dirt without explicit instruction.
+### Tier C — other shells'' dirty worktrees (gated; preserve-only)
 
-### Tier C — Other shells'' dirty worktrees (gated; preserve-only)
+Any other shell''s worktree: `is_main: false` + `dirty > 0`.
 
-Any *other* shell''s worktree (`is_main: false`) with `dirty > 0`. Two hazards
-make this the careful tier:
-
-1. **Attribution.** A commit made in `shell/<shortname>`''s worktree must carry
-   *that shell''s* trailer, not the admin''s. Map the worktree branch
-   (`shell/<shortname>`) → shell, and look up its `display_name`:
+1. **Liveness gate.** Committing files is non-destructive, but re-branching a worktree under a mid-session shell stomps that live session. Read the `shell_liveness` verdict:
+   - `safe_to_clean_all: true` -> every worktree dormant -> act on all.
+   - shortname in `active_other_shells` -> that shell is LIVE -> surface only, do NOT touch its tree. The others remain safe.
+   - `indeterminate > 0` -> a harness process whose cwd was unreadable (another OS user, say) -> do NOT assume all-clear -> surface.
+2. **Attribution.** The commit carries THAT shell''s trailer, never the admin''s. Map the branch `shell/<shortname>` -> shell:
    ```bash
    sc sql \
      "SELECT display_name FROM shells WHERE shortname=''<shortname>'' AND is_deleted=0;"
    ```
-   Use it in the trailer: `Co-Authored-By: <display_name> (super-coder) <noreply@…>`.
-2. **Liveness.** Committing files is itself non-destructive, but moving a
-   *mid-session* shell''s worktree onto a new feature branch underneath it stomps
-   that live session. `shell_liveness.py` settles this authoritatively — read its
-   verdict for the worktree''s shell:
-   - **`safe_to_clean_all: true`** — you are the only live shell; every worktree
-     is dormant → clear to act on all of them.
-   - **shortname in `active_other_shells`** — that shell is LIVE → **surface
-     only, do not touch its tree.** The others remain safe.
-   - **`indeterminate > 0`** — a harness process whose cwd you couldn''t read
-     (another OS user, say). Do **not** assume all-clear → surface.
+   Trailer: `Co-Authored-By: <display_name> (super-coder) <noreply@…>`.
+3. **Preserve** (shell cleared as not live):
+   ```bash
+   WT=.sc-worktrees/<shortname>
+   git -C $WT checkout -b <type>/<short-desc>           # feature branch off its HEAD
+   git -C $WT add -A && git -C $WT commit -m "<msg>
 
-When the verdict clears a worktree (its shell is not live), preserve it:
-```bash
-WT=.sc-worktrees/<shortname>
-git -C $WT checkout -b <type>/<short-desc>           # feature branch off its HEAD
-git -C $WT add -A && git -C $WT commit -m "<msg>
-
-Co-Authored-By: <display_name> (super-coder) <noreply@…>"
-git -C $WT push -u origin <type>/<short-desc>
-gh pr create --repo <owner/repo> --head <type>/<short-desc> --fill   # open, never merge
-```
-
-3. **Tell the shell what you did in its tree.** A shell must never boot to find
-   its worktree silently rearranged. After acting, message the owning shell (see
-   the `messaging` skill) so it discovers the change on its next boot:
+   Co-Authored-By: <display_name> (super-coder) <noreply@…>"
+   git -C $WT push -u origin <type>/<short-desc>
+   gh pr create --repo <owner/repo> --head <type>/<short-desc> --fill   # open, never merge
+   ```
+4. **Message the owning shell** — it must never boot to a silently rearranged tree (see the `messaging` skill):
    ```bash
    sc mem message send <shortname> ''git_cleanup: your worktree had uncommitted work. I preserved it on branch `<type>/<short-desc>` and opened PR #<n>. Your tree now sits on that branch — `git checkout shell/<shortname>` to return to your base.''
    ```
-   Also report the same to the FnB. If the worktree could not be acted on (shell
-   was live, or indeterminate), no message — it was left untouched.
+   Report the same to the FnB. Worktree left untouched (live / indeterminate) -> no message.
 
 ## Hard nevers
 
-- **Never `git checkout -- `, `git reset --hard`, `git clean`, or `git stash
-  drop` on uncommitted work without the FnB''s explicit per-item OK.** Preserve
-  is reversible; discard is not.
-- **Never commit another shell''s work under the admin''s attribution.**
-- **Never act on a worktree whose shell may be live.** Surface instead.
-- **Never merge a PR.** Opening is the default; merging is the FnB''s gate
-  (see the `git` skill).
-- **Never delete a branch carrying unmerged, un-PR''d work** — a deleted branch
-  with no PR is lost work.
-- **Never touch the engine.** `.super-coder/` is gitignored materialized
-  dependency, not your code.
+- NEVER `git checkout -- `, `git reset --hard`, `git clean`, or `git stash drop` on uncommitted work without the FnB''s explicit per-item OK — preserve is reversible, discard is not.
+- NEVER commit another shell''s work under the admin''s attribution.
+- NEVER act on a worktree whose shell may be live — surface instead.
+- NEVER merge a PR — opening is the default; merging is the FnB''s gate (see the `git` skill).
+- NEVER delete a branch carrying unmerged, un-PR''d work — no PR = lost work.
+- NEVER touch the engine — `.super-coder/` is a gitignored materialized dependency, not your code.
 
 ## Step 3 — Report
 
-Close with a tight summary: what was deleted (with evidence — PR #), what was
-pushed/PR''d (with links), what was surfaced and is waiting on the FnB''s call,
-and the final `git_hygiene.py --text` so the FnB sees the after-state. If
-nothing was outstanding: say so and stop.',
+Close with: deleted (evidence — PR #), pushed/PR''d (links), surfaced and awaiting the FnB''s call, + a final `git_hygiene.py --text` as the after-state. Nothing outstanding -> say so and stop.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2043,61 +1864,52 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   1,
   '# issue_reporting — the backwards flow
 
-The engine improves through what forks report. Every fork runs super-coder
-harder than its authors can; when it breaks under you, that observation is
-engine input, not fork trivia. Fixed upstream once, the fix reaches every fork
-via `./sc update`. Worked around silently, every fork re-derives the same
-workaround forever.
+An engine defect fixed upstream reaches every fork via `./sc update`; worked
+around silently, every fork re-derives the workaround. File the issue while
+the failure is on screen — NEVER batch to session end.
 
-**A workaround is a report.** If you had to deviate from a skill''s
-instructions, wrap a command, or hand-patch state to proceed — you are holding
-the exact repro and the exact fix-shaped evidence upstream needs. File it
-*while it''s in front of you*; don''t batch to session end.
+A workaround IS a report: deviating from a skill''s steps, wrapping a command,
+or hand-patching state to proceed -> you hold the exact repro; file it now.
 
 ## Boundary — engine vs fork
 
-**Upstream (file it):** anything the engine materializes or owns —
-`.super-coder/`, the `sc` command and every subcommand, engine skills (this
-catalogue), the boot doc render, the sandbox / dev kit, `./sc update` and
-migrations, the `_sc` API and `sc mem`.
+| Where | What |
+|---|---|
+| **Upstream — file it** | anything the engine materializes/owns: `.super-coder/`, `sc` + every subcommand, engine skills (this catalogue), the boot doc render, the sandbox / dev kit, `./sc update` + migrations, the `_sc` API + `sc mem` |
+| **Fork — don''t** | the repo''s app code, fork-local skills (see `local_skill_management`), operator-owned host config |
 
-**Fork (don''t):** your repo''s app code, fork-local skills (yours — see
-`local_skill_management`), host config the operator owns.
-
-Unsure? Ask: *would the same problem hit any other fork?* Yes → upstream.
+Unsure -> "would the same problem hit any other fork?" yes = upstream.
 
 ## Triggers
 
-Every row below is a real engine defect found and reported by a fork shell
-doing ordinary work. Recognize yourself in the left column → file.
+Each row = a real engine defect filed by a fork shell doing ordinary work.
+Match the left column -> file.
 
 | You hit | Real case |
 |---|---|
 | A `./sc` command fails out of the box | `./sc verify` always aborted — its own render step needed `SC_ADMIN` it never set (#227) |
-| A command exits green without doing the work | `./sc test` silently fell back to unittest when pytest was missing — spurious failures, green-washed suites (#219) |
-| The documented remedy is a closed loop | `./sc lint` said "run `./sc deps` first," but deps skips pip in the sandbox — the tool was unobtainable from inside the box (#246) |
-| A skill instructs tools or paths your seat doesn''t have | `configure_winbox` drove raw `ssh`/`virsh` — neither exists in the sandbox, which is broker-only by design (#248) |
+| A command exits green without doing the work | `./sc test` silently fell back to unittest when pytest was missing — green-washed suites (#219) |
+| The documented remedy is a closed loop | `./sc lint` said "run `./sc deps` first," but deps skips pip in the sandbox — tool unobtainable from inside the box (#246) |
+| A skill instructs tools/paths your seat doesn''t have | `configure_winbox` drove raw `ssh`/`virsh` — neither exists in the broker-only sandbox (#248) |
 | A skill contradicts what the engine actually does | skills still taught raw `sqlite3` against the substrate DB after memory went API-only (#226) |
-| The API refuses what the skills document | `sc mem doc add` 400''d standalone docs that the docs + onboard skills both document (#245) |
-| A permission wall mid-workflow | a dev shell could read a planner-owned feature but 404''d advancing its status — the handoff was walled off (#224) |
-| Every write suddenly 401s | rebuild didn''t re-mint api_keys, so all live shells were locked out until an API bounce (#214) |
-| `./sc update` / migrate wedges or half-applies | a migration failed partway, and the retry died on `duplicate column name` — chain wedged (#229); update aborted crossing a commit that deleted an engine file (#209) |
-| A structural foot-gun keeps re-biting you | the cwd trap — `cd` to root for `./sc`, then bare git hit the wrong tree and "my edits vanished" (#225) |
-| The sandbox can reach something it shouldn''t | `do_push` src/dest weren''t contained — a sandbox→host escape (#228) |
+| The API refuses what the skills document | `sc mem doc add` 400''d standalone docs the docs + onboard skills both document (#245) |
+| A permission wall mid-workflow | a dev shell could read a planner-owned feature but 404''d advancing its status (#224) |
+| Every write suddenly 401s | rebuild didn''t re-mint api_keys — all live shells locked out until an API bounce (#214) |
+| `./sc update` / migrate wedges or half-applies | migration failed partway, retry died on `duplicate column name` (#229); update aborted crossing a commit that deleted an engine file (#209) |
+| A structural foot-gun keeps re-biting you | the cwd trap — `cd` to root for `./sc`, then bare git hit the wrong tree, "my edits vanished" (#225) |
+| The sandbox can reach something it shouldn''t | `do_push` src/dest weren''t contained — sandbox→host escape (#228) |
 
-Stale-guidance reports (skill says X, engine does Y) are as valuable as
-crashes — they cost the next shell a session of confusion each.
+Stale guidance (skill says X, engine does Y) files the same as a crash.
 
 ## Capture — while the failure is on screen
 
-- **engine ref:** `cat .sc-state/engine.ref` — first line of every report.
-- **fork + seat:** repo name, which shell (flavor), sandbox or host.
-- **what you ran / followed:** the exact command, or skill name + step.
-- **expected vs actual:** with the exact output, trimmed to the failing lines.
-- **workaround:** what you did instead — or "blocked, none found."
+- **engine ref** = `cat .sc-state/engine.ref` — first line of every report
+- **fork + seat**: repo name, shell flavor, sandbox/host
+- **ran / followed**: the exact command, or skill name + step
+- **expected vs actual**: exact output, trimmed to the failing lines
+- **workaround**: what unblocked you, or "blocked, none found"
 
-Sanitize before it leaves the fork: no api keys, tokens, secrets, or private
-paths in the body. The issue is public.
+The issue is public: NEVER paste api keys, tokens, secrets, or private paths.
 
 ## File it
 
@@ -2120,23 +1932,22 @@ EOF
 )"
 ```
 
-(`jedbjorn/super-coder` is the engine upstream — confirm with
-`git remote get-url super-coder` if in doubt.)
+`jedbjorn/super-coder` = engine upstream; confirm: `git remote get-url super-coder`.
 
-If a match exists: comment your engine ref + repro on it instead of filing a
-duplicate — a second fork confirming is signal, not noise.
+Dedup hit -> comment your engine ref + repro on the existing issue; do NOT
+file a duplicate.
 
-**No `gh` / no network from your seat:** save the identical body as a fork
-flag — `sc mem flag open "[Engine] <symptom> | Blocker for: <x>" --name UP-###`
-— and message the **admin** shell to relay it upstream (see `messaging`).
+No `gh` / no network from your seat -> save the identical body as a fork flag:
+`sc mem flag open "[Engine] <symptom> | Blocker for: <x>" --name UP-###`, then
+message the **admin** shell to relay it upstream (see `messaging`).
 
 ## Rules
 
 - One defect per issue. Batch nothing.
-- Defects file directly; *enhancement* ideas ("the engine should…") go to your
-  FnB first — an observed failure is the bar for filing unasked.
-- Filing does not close your loop: if the defect blocks work, also open a fork
-  flag linking the issue URL so the blocker is tracked where you work.',
+- Observed failure = the bar for filing unasked; enhancement ideas ("the
+  engine should…") go to your FnB first.
+- Filing ≠ unblocked: defect blocks work -> also open a fork flag linking the
+  issue URL.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2152,21 +1963,20 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# local_skill_management — fork-specific skills that survive
 
-Fork-specific skills live in the DB and are persisted via `.sc-state/content.sql`
-(the snapshot). The asset file under `.super-coder/assets/skills/<name>/` is the
-**authoring source** — edit it, re-seed, done. It sits in gitignored engine
-territory, but that is safe: the engine/local boundary is the seed migration
-(0001, upstream-owned in a fork), not asset-file presence, so the snapshot
-serializes your skill to content.sql whether or not the asset file is kept, and
-`sc update` neither manifests it nor heals over its DB row. **content.sql is
-the durable form; the asset file is your editor.**
+Fork-specific skills live in the DB and persist via `.sc-state/content.sql`
+(the snapshot). The asset file under `.super-coder/assets/skills/<name>/` is
+the **authoring source only** — it sits in gitignored engine territory, and
+that is safe: the engine/local boundary is the seed migration (0001,
+upstream-owned in a fork), not asset-file presence. The snapshot serializes
+your skill to content.sql whether or not the asset file is kept, and
+`sc update` neither manifests it nor heals over its DB row. **content.sql =
+the durable form; the asset file = your editor.**
 
-The path: **file → seed → grant → snapshot → commit**.
+The path: **file -> seed -> grant -> snapshot -> commit**.
 
 ## Creating a fork-specific skill
 
-1. **Write the skill file.**
-   Path: `.super-coder/assets/skills/<name>/SKILL.md`
+1. **Write the skill file** at `.super-coder/assets/skills/<name>/SKILL.md`.
 
    Required frontmatter:
    ```yaml
@@ -2176,103 +1986,99 @@ The path: **file → seed → grant → snapshot → commit**.
    category: substrate   # or craft; omit for default
    ---
    ```
-   Body: Markdown. Write the procedure the shell will follow. Imperative,
-   precise — this is what boots into context, so compress ruthlessly.
+   Body: markdown procedure the shell will follow. Imperative, compressed —
+   this boots into context.
 
-2. **Seed the skill into the live DB.**
+2. **Seed into the live DB:**
    ```bash
    sc seed-skills
    ```
-   UPSERTs every asset skill into the live DB by name (id-stable) and reports
-   what landed. In a fork it deliberately does NOT regenerate the seed
-   migration — that file is upstream-owned engine territory. Skills already in
-   the DB with no asset file are other local skills, left intact.
+   UPSERTs every asset skill by name (id-stable) and reports what landed. In a
+   fork it deliberately does NOT regenerate the seed migration — that file is
+   upstream-owned engine territory. DB skills with no asset file = other local
+   skills, left intact.
 
-3. **Grant the skill to the target shell(s)** — by shell id or shortname:
+3. **Grant to target shell(s)** — by shell id or shortname:
    ```bash
    sc skill grant <skill_name> <shell>...
    ```
-   Unknown skill or shell names are hard errors (no silent no-op grants).
-   `sc skill list` shows the catalogue with origins and current grants;
+   Unknown skill/shell names = hard error (no silent no-op grants).
+   `sc skill list` = catalogue with origins + current grants;
    `sc skill revoke <name> <shell>...` reverses a grant.
 
-4. **Snapshot — this is the persistence step.**
+4. **Snapshot — the persistence step:**
    ```bash
    sc snapshot && sc render
    ```
    `snapshot.py` serializes local skills (any skill the engine seed doesn''t
-   own) into `.sc-state/content.sql`. This is what survives `sc update` and
-   `sc rebuild` — the skill row and its grants are reconstructed from
-   content.sql. Without this step the skill is lost on next update.
+   own) into `.sc-state/content.sql` — what survives `sc update` and
+   `sc rebuild`; the row + grants reconstruct from content.sql. Skip this ->
+   the skill is lost on next update.
 
-5. **Commit.**
-   Run `sc render-check` first — it rebuilds hermetically and fails if the
-   `skills_sc/` mirror drifts from the DB render (the same CI guard; see the
-   `snapshot` skill). Then stage `.sc-state/content.sql` and `skills_sc/`
-   together — the snapshot without the re-rendered mirror is the drift.
+5. **Commit.** Run `sc render-check` first — hermetic rebuild, fails if the
+   `skills_sc/` mirror drifts from the DB render (the CI guard; see the
+   `snapshot` skill). Then stage `.sc-state/content.sql` + `skills_sc/`
+   together — snapshot without re-rendered mirror = the drift.
 
 ## Updating a skill
 
-Edit the asset file, then repeat seed → snapshot → commit (steps 2, 4, 5). If
-the asset file is gone (removed, or authored elsewhere), recreate it from the
-DB body first: `sc sql "SELECT content FROM skills WHERE name=''<name>''"`.
+Edit the asset file -> repeat seed -> snapshot -> commit (steps 2, 4, 5).
+Asset file gone (removed / authored elsewhere) -> recreate it from the DB body
+first: `sc sql "SELECT content FROM skills WHERE name=''<name>''"`.
 
 ## Assigning an existing skill to additional shells
 
 ```bash
 sc skill grant <skill_name> <shell>...
 ```
-Then `sc snapshot && sc render` and commit.
+Then `sc snapshot && sc render` + commit.
 
 ## Removing a skill
 
-1. **Soft-delete the row and revoke its grants:**
+1. **Soft-delete the row + revoke its grants:**
    ```bash
    sc skill rm <skill_name>
    ```
-   Refuses engine skills — the seed would resurrect those on the next
-   update/rebuild. For an engine skill this fork has superseded, retire it
-   fork-wide instead: `sc skill retire <name>` (writes the tracked
+   Refuses engine skills — the seed resurrects those on next update/rebuild.
+   Engine skill this fork has superseded -> retire fork-wide:
+   `sc skill retire <name>` (writes the tracked
    `.sc-state/skills_retired.json`, which rides updates; `sc skill unretire`
-   reverses). For a per-shell removal, `sc skill revoke`.
+   reverses). Per-shell removal -> `sc skill revoke`.
 
-2. **Remove the asset file** (`.super-coder/assets/skills/<name>/`) — otherwise
-   the next `sc seed-skills` re-inserts the skill.
+2. **Remove the asset file** (`.super-coder/assets/skills/<name>/`) —
+   otherwise the next `sc seed-skills` re-inserts the skill.
 
-3. **Snapshot, render, commit.**
+3. **Snapshot, render, commit:**
    ```bash
    sc snapshot && sc render
    ```
 
 ## How the GUI organizes skills
 
-The review GUI has a **Skills tab**: the full catalogue in sections, with
-per-shell grant toggles on every skill. The Shells tab groups its grant list
-by the same sections.
+The review GUI Skills tab shows the full catalogue in sections with per-shell
+grant toggles; the Shells tab groups its grant list by the same sections.
 
-- **Repo skills** — the lead section: skills authored in this fork. Membership
-  is *derived*, not declared — a skill the engine seed doesn''t own is
-  repo-local. This is the same rule snapshot.py uses to decide what serializes
-  into `.sc-state/content.sql`, so the section shows exactly what the snapshot
-  keeps durable. No frontmatter flag exists or is needed.
-- **Substrate / Craft / …** — engine skills, sectioned by their `category`
-  frontmatter. A repo skill''s `category` still displays as a label on its row,
-  but never moves it out of the Repo section.
+- **Repo skills** — lead section: skills authored in this fork. Membership is
+  *derived* — a skill the engine seed doesn''t own is repo-local. Same rule
+  snapshot.py uses to decide what serializes into `.sc-state/content.sql`, so
+  the section shows exactly what the snapshot keeps durable. No frontmatter
+  flag exists or is needed.
+- **Substrate / Craft / …** — engine skills, sectioned by `category`
+  frontmatter. A repo skill''s `category` displays as a row label but never
+  moves it out of the Repo section.
 
-Grant toggles in the GUI hit the same DB table as `sc skill grant` — they
-still need a **snapshot** (header button or `sc snapshot`) to survive a
-rebuild.
+GUI grant toggles hit the same DB table as `sc skill grant` — they still need
+a snapshot (header button or `sc snapshot`) to survive a rebuild.
 
 ## What NOT to do
 
-- **Never skip the snapshot after creating a skill.** Seeding puts the row in
-  the live DB only; content.sql is what survives `sc update` and `sc rebuild`.
-- **Never edit `0001_seed_skills.sql` by hand.** It is generated, and in a
-  fork it is upstream-owned engine territory — a local edit blocks the next
-  update.
-- **Never use the GUI to create skills.** Toggling grants in the GUI is fine
-  (snapshot after); creating is not — the GUI writes only to the DB and cannot
-  write the asset file or seed it. Use this procedure instead.',
+- **NEVER skip the snapshot after creating a skill.** Seeding writes the live
+  DB only; content.sql is what survives `sc update` and `sc rebuild`.
+- **NEVER edit `0001_seed_skills.sql` by hand.** Generated, and in a fork
+  upstream-owned engine territory — a local edit blocks the next update.
+- **NEVER create skills via the GUI.** Toggling grants there is fine (snapshot
+  after); creating is not — the GUI writes only the DB and cannot write the
+  asset file or seed it. Use this procedure.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2282,42 +2088,41 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'memory',
-  'How this shell writes its memory — current_state, session narrative, seed, L&S, decisions. Write as it happens, not at close. Use to know WHEN and HOW to persist identity/work memory, and the caps.',
+  'When + how this shell persists memory — current_state, session narrative, seed (cap 10), L&S (cap 20), decisions — all via sc mem, written as it happens, not at close.',
   'substrate',
   NULL,
   1,
   '# memory — write as you go
 
-All memory is DB rows (no flat files). Write at the moment it matters, not in a
+All memory = DB rows; no flat files. Write at the moment it matters, never in a
 close ritual.
 
-**Write through `sc mem`.** The write lands in the live engine DB — shared by
-every shell, durable + visible to all the moment it commits. It always targets
-your own shell: the server resolves your identity from your token, so you never
-name a shell.
+Every write goes through `sc mem` -> lands in the live shared engine DB, visible
+to all shells on commit. It always targets your own shell (identity resolved
+from your token) — never name a shell.
 
 ## current_state — rolling status, NOT a log
 
-Your present focus + what''s next. **Replaces in place; never a log.** Soft target
-~500 chars. Rewrite when focus shifts.
+Present focus + what''s next. Replace in place; NEVER append. Soft target ~500
+chars. Rewrite when focus shifts.
 ```
 sc mem state "…"
 ```
 
 ## Session narrative — append at inflection points
 
-One row per session, appended progressively. Append a `[HH:MM]` line (the time is
-stamped for you) when: a decision lands, an approach changes or is rejected, the
-FnB says something that shapes the work, an assumption breaks, or before a big
-change.
+One row per session, appended progressively. Append a `[HH:MM]` line (time is
+stamped for you) when: a decision lands / an approach changes or is rejected /
+the FnB says something that shapes the work / an assumption breaks / before a
+big change.
 ```
 sc mem narrative "…"
 ```
 
 ## seed (cap 10) — who you are
 
-Identity-forming moments. Past-tense/timeless. Add a new entry; **never edit a
-body** (curate by retiring). The genesis + lineage seed are already yours.
+Identity-forming moments. Past-tense/timeless. Add new entries only; NEVER edit
+a body — curate by retiring. The genesis + lineage seed are already yours.
 ```
 sc mem seed "…"            # add
 sc mem retire <entry_id>   # curate out (frees a cap slot)
@@ -2325,9 +2130,9 @@ sc mem retire <entry_id>   # curate out (frees a cap slot)
 
 ## L&S (cap 20) — how you work
 
-Operating lessons, imperative voice. Add when a lesson lands; curate by retiring.
-Caps are trigger-enforced (seed 10, L&S 20) — `sc mem` reports the cap message;
-retiring frees a slot.
+Operating lessons, imperative voice. Add when a lesson lands; curate by
+retiring. Caps are trigger-enforced (seed 10, L&S 20): at cap, `sc mem` returns
+the cap message -> retire an entry to free the slot.
 ```
 sc mem lns "…"
 ```
@@ -2335,28 +2140,27 @@ sc mem lns "…"
 ## Decisions — Major only
 
 Record a Major decision (architecture, approach, a path chosen over another).
-Never rewritten; supersede via `--parent <decision_id>`. Mirror the headline into
-the narrative.
+NEVER rewrite one — supersede via `--parent <decision_id>`. Mirror the headline
+into the narrative.
 ```
 sc mem decision "…" --rationale "…" [--parent <id>]
 ```
 
-**Link the why to the what.** Most decisions shape a feature or come out of a
-spec — attach that link so the roadmap carries not just what was built and how,
-but why it was built that way:
+Link the why to the what — attach the feature/spec the decision shapes, so the
+roadmap carries why it was built that way:
 ```
 sc mem decision "…" --feature <feature_id>   # ties it to a roadmap feature
 sc mem decision "…" --doc <document_id>       # ties it to a spec/doc (implies the feature)
 ```
-Both optional — a decision unrelated to any feature stays unlinked. `--doc` is a
-refinement of `--feature`: pass the doc alone and the feature is derived from it.
-The link surfaces on `sc mem get decisions <id>`.
+Both optional — a decision unrelated to any feature stays unlinked. `--doc`
+implies `--feature`: pass the doc alone -> feature derived from it. The link
+surfaces on `sc mem get decisions <id>`.
 
 ## Stance
 
-Write-as-you-go beats batch-at-close: it costs nothing per write and zero at
-session end. Curate seed/L&S (revise the set), never rewrite history (decisions,
-narrative, seed bodies). Full command reference + table map: the `db_map` skill.',
+Write-as-you-go beats batch-at-close: nothing per write, zero at session end.
+Curate seed/L&S (revise the set); never rewrite history (decisions, narrative,
+seed bodies). Full command reference + table map: the `db_map` skill.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2372,12 +2176,9 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   1,
   '# messaging — the shell inbox
 
-One shell writes a markdown message to another; the recipient discovers it on its
-next boot via the `## STATUS` `Inbox:` count, surfaces it with `check`, and clears
-it with `mark-read`. Body is markdown — preserved verbatim.
-
-Drive it with **`sc mem message`**. The sender is you; recipients are addressed
-by `shortname`.
+Shell-to-shell markdown messages, driven by `sc mem message`. Sender = you;
+recipient addressed by `shortname`. Body = markdown, preserved verbatim.
+Recipient discovers it on its next boot via the `## STATUS` `Inbox:` count.
 
 Trigger: `--message`
 Args: `check [N] | send <to-shortname> <body> | mark-read <id>`
@@ -2388,8 +2189,8 @@ Args: `check [N] | send <to-shortname> <body> | mark-read <id>`
 sc mem message check [N]      # N optional; default 50, max 200
 ```
 
-`check` is read-only — it does **not** auto-mark-read. Surface the body to the
-operator (and reply if warranted, which is itself a `send`), then `mark-read` the
+Read-only — it does NOT auto-mark-read. Surface the body to the operator
+(reply if warranted — a reply is itself a `send`), then `mark-read` the
 inbound in the same turn.
 
 ## send — message another shell
@@ -2398,11 +2199,11 @@ inbound in the same turn.
 sc mem message send <to-shortname> "<body>"
 ```
 
-- Multi-word body = a single quoted argument; markdown is preserved verbatim.
+- Multi-word body = one quoted argument; markdown preserved verbatim.
 - Examples: `sc mem message send cartographer "map is stale — re-run sc map"`
   · `sc mem message send cc "spec ready for review — see flag SC-014"`
-- Unknown / deleted recipient → `mem: recipient shortname ''<x>'' unknown`. Empty
-  body → `mem: body is empty`. Surface either to the operator plainly.
+- Unknown / deleted recipient -> `mem: recipient shortname ''<x>'' unknown`;
+  empty body -> `mem: body is empty`. Surface either to the operator plainly.
 
 ## mark-read — clear an inbox item (idempotent)
 
@@ -2410,16 +2211,16 @@ sc mem message send <to-shortname> "<body>"
 sc mem message mark-read <message_id>
 ```
 
-Access control: you can only mark read a message addressed to **you** — one for
-another shell is a no-op. Re-marking a read message is also a no-op. Pass the
-`message_id` that `check` surfaced.
+Pass the `message_id` that `check` surfaced. Only messages addressed to you
+clear — another shell''s message = no-op; re-marking a read message = no-op.
 
 ## Stance
 
-On boot, if the `## STATUS` `Inbox:` line is non-zero, run `--message check` and
-surface the first item before continuing. A reply is a new `send` — there is no
-threading; include `Re: <topic>` in the body if it matters. Keep the inbox honest:
-mark-read only once you''ve actually acted on the message.',
+- On boot, `Inbox:` non-zero -> run `--message check` and surface the first
+  item before continuing.
+- No threading: a reply = a new `send`; include `Re: <topic>` in the body if
+  it matters.
+- `mark-read` only after you have actually acted on the message.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2435,83 +2236,79 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# migration_management — fork-specific schema changes
 
-Migrations live in `.super-coder/migrations/` and apply in numeric order,
-tracked by the `schema_migrations` ledger table. Engine updates apply pending
-migrations automatically; you can apply them locally without a fetch using
+Migrations live in `.super-coder/migrations/`, apply in numeric order, tracked
+by the `schema_migrations` ledger table. Engine updates apply pending
+migrations automatically; apply locally without a fetch via
 `sc update --no-fetch`.
 
-**Scope:** fork-specific schema changes — tables, columns, constraints, or
-system-content seeds (skills, flavor defaults) that this fork needs and that
-will not ship upstream. Upstream engine migrations arrive via `sc update`
-and require no action from you.
+**Scope:** fork-specific changes — tables, columns, constraints, or
+system-content seeds (skills, flavor defaults) this fork needs that will not
+ship upstream. Upstream engine migrations arrive via `sc update`; no action
+from you.
 
 ## Authoring a migration
 
-1. **Find the next migration number.**
+1. **Find the next number:**
    ```bash
    ls .super-coder/migrations/ | sort | tail -5
    ```
-   Name the file `NNNN_<slug>.sql` where NNNN is the next integer, zero-padded
-   to 4 digits (e.g. `0012`).
+   Name the file `NNNN_<slug>.sql`, NNNN = next integer zero-padded to 4
+   digits (e.g. `0012`).
 
-2. **Write the file.**
-   Path: `.super-coder/migrations/NNNN_<slug>.sql`
-
-   Requirements:
+2. **Write the file** at `.super-coder/migrations/NNNN_<slug>.sql`:
    - Wrap in `BEGIN; ... COMMIT;`
    - Idempotent: `CREATE TABLE IF NOT EXISTS`, `INSERT OR IGNORE`,
      `CREATE INDEX IF NOT EXISTS`, `DROP TABLE IF EXISTS` before recreate
-   - Comment header: migration number, intent, and doctrine notes if relevant
-   - Structure and system content only — per-instance data (shell memory,
+   - Comment header: migration number + intent (+ doctrine notes if relevant)
+   - Structure + system content only — per-instance data (shell memory,
      grants, roadmap, flags) lives in `.sc-state/content.sql` via snapshot,
-     not in migrations
+     never in migrations
 
-3. **Apply locally.**
+3. **Apply locally:**
    ```bash
    sc update --no-fetch
    ```
    Skips the upstream fetch; applies all pending local migrations in order.
-   Confirm the migration landed:
+   Confirm it landed:
    ```sql
    SELECT * FROM schema_migrations ORDER BY applied_at DESC LIMIT 5;
    ```
 
-4. **Verify.**
+4. **Verify:**
    ```bash
    sc verify
    ```
-   Headless boot proof — confirms shells, memory, and schema are intact.
+   Headless boot proof — shells, memory, and schema intact.
 
-5. **Snapshot and commit.**
+5. **Snapshot + commit:**
    ```bash
    sc snapshot
    ```
    Commit `.sc-state/content.sql` + `migrations/NNNN_<slug>.sql`.
-   - **Content-seed migration?** If the migration seeds *system content* that
-     renders (skills, flavor defaults), it also changes the flat `_sc` mirrors —
-     but only once the new rows are in the DB. After `sc update --no-fetch`,
-     run `sc render && sc render-check` and commit the re-rendered `_sc`
-     files alongside the migration. A render against a DB that predates the seed
-     passes locally while CI''s hermetic rebuild goes red. See the `snapshot`
-     skill (stale-mirror trap).
+   - **Content-seed migration** (seeds system content that renders — skills,
+     flavor defaults) also changes the flat `_sc` mirrors, but only once the
+     new rows are in the DB: after `sc update --no-fetch`, run
+     `sc render && sc render-check` and commit the re-rendered `_sc` files
+     alongside the migration. A render against a DB predating the seed passes
+     locally while CI''s hermetic rebuild goes red — the stale-mirror trap; see
+     the `snapshot` skill.
 
 ## What makes a good migration
 
-- **Additive by default.** Add columns, tables, indexes. Avoid DROP or RENAME
-  unless correcting a prior mistake; prefer a new column over renaming one that
-  code may already reference.
-- **No per-instance content.** Shell memory, skill grants, roadmap items, and
-  flags go in the snapshot, not here. Migrations carry structure and system
-  content that propagates to all forks.
-- **Comment the why.** Future-you reading a migration needs the intent, not
-  just the SQL.
+- **Additive by default.** Add columns/tables/indexes. No DROP or RENAME
+  unless correcting a prior mistake; prefer a new column over renaming one
+  code may reference.
+- **No per-instance content.** Shell memory, skill grants, roadmap items,
+  flags -> snapshot. Migrations carry structure + system content that
+  propagates to all forks.
+- **Comment the why** — future readers need the intent, not just the SQL.
 
 ## Rollback
 
-There is no per-migration rollback. `sc rollback` restores the full DB +
-engine to the prior update point (`engine.ref.prev`). Use it only when a
-migration is so broken the DB is corrupt or the app won''t start. For logical
-errors, write a corrective migration instead.',
+No per-migration rollback. `sc rollback` restores the full DB + engine to the
+prior update point (`engine.ref.prev`). Use only when a migration is so broken
+the DB is corrupt or the app won''t start; for logical errors, write a
+corrective migration instead.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2521,40 +2318,39 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'onboard',
-  'One-time, FnB-supervised ingest of a repo''s EXISTING docs/specs into the DB + roadmap backfill. The only time content flows file→DB. Run once after bootstrap on a fork that has existing documentation. Planning shell''s job.',
+  'One-time, FnB-supervised ingest of a repo''s EXISTING docs/specs into the DB + roadmap backfill — the only time content flows file→DB. Run once after bootstrap on a fork with existing documentation. Planning shell''s job.',
   'substrate',
   NULL,
   0,
   '# onboard — ingest the repo''s existing docs (once, with the FnB)
 
-After `bootstrap` (you''ve oriented), this brings the repo''s *existing*
-documentation **into the DB** so the GUI shows real content and the roadmap
-reflects what''s already there. This is the **one** legitimate file→DB direction
-— a supervised, one-time import. After it, the DB owns content; it''s DB→flat
-only (or the drift we''re killing comes back). `<self>` = your shell_id.
+Run once, after `bootstrap`, on a fork that has existing documentation —
+FnB-supervised. Brings the repo''s *existing* docs into the DB so the GUI shows
+real content and the roadmap reflects what''s already there. This is the ONE
+legitimate file→DB direction; after it the DB owns content and the flow is
+DB→flat only — re-importing = drift. `<self>` = your shell_id.
 
-## 1. List what exists (from the map, not a blind walk)
+## 1. List what exists — from the map, not a blind walk
 ```sql
 -- the map is its own db: sc map-sql "<query>"
 SELECT path, lang, lines FROM dr_filepath WHERE role=''doc'' ORDER BY path;
 ```
-These are the repo''s real docs (README, `docs/`, `specs/`, guides). The `_sc`
-dirs are OUR render output — never ingest those.
+These are the repo''s real docs (README, `docs/`, `specs/`, guides). NEVER
+ingest `_sc` dirs — those are OUR render output.
 
 ## 2. Read + classify, with the FnB
-For each doc, read the file and decide together:
-- **spec** — describes a feature / planned work → tied to a roadmap feature.
-- **doc** — reference / guide / overview (README, CONTRIBUTING) → general, no
+Read each doc; decide together:
+- **spec** = describes a feature / planned work -> tie to a roadmap feature.
+- **doc** = reference / guide / overview (README, CONTRIBUTING) -> general, no
   feature.
 Skip noise (changelogs, license, vendored docs) unless the FnB wants it.
 
-All writes here go through `sc mem` (routed through the engine API, which writes
-to the live shared DB — the import never touches the app DB).
+All writes below go through `sc mem` -> live shared engine DB; the import never
+touches the app DB.
 
 ## 3. Backfill the roadmap
-Create a feature for each coherent area/initiative the docs imply; set status by
-how built it is (`shipped` if done + documented, `near_term`/`brainstorm` if
-planned):
+Create one feature per coherent area/initiative the docs imply; status by how
+built it is: `shipped` = done + documented, `near_term`/`brainstorm` = planned.
 ```
 sc mem roadmap add "…" --status shipped --summary "…"
 ```
@@ -2567,23 +2363,23 @@ sc mem doc add "README" --kind doc --body-file ./README.md --render-path docs_sc
 # a feature''s spec (link it):
 sc mem doc add "…" --kind spec --feature <id> --body-file ./path/to/spec.md --render-path specs_sc/….md
 ```
-If a spec describes shipped work, freeze it: `sc mem doc freeze <document_id>`.
+Spec describes shipped work -> freeze it: `sc mem doc freeze <document_id>`.
 
 ## 5. Persist
-Each `sc mem` write is live in the shared engine DB immediately, so the GUI''s
-Docs/Roadmap tabs reflect the import as you go. The flat `_sc` copies and the git
-commit are an admin/GUI publish step — not part of onboarding.
+Each `sc mem` write is live in the shared engine DB immediately -> the GUI''s
+Docs/Roadmap tabs reflect the import as you go. Flat `_sc` copies + git commit
+= an admin/GUI publish step, not part of onboarding.
 
 ## 6. The host''s original files — three exits (optional; coexist by default)
-The DB now holds the canonical copy. Because we render to `_sc/`, the originals
-never collide — so **coexist (freeze)** is the default. Offer the FnB:
+The DB now holds the canonical copy; renders go to `_sc/`, so originals never
+collide. Offer the FnB:
 - **freeze** — leave the original files as-is (default).
 - **archive** — move them to an abandoned branch, drop from `main`.
 - **delete** — remove them (the DB has them).
 
 ## Stance
-Ingest is **once**. Don''t re-ingest (drift). After onboarding, author via the
-shell/GUI and render to flat — never edit the flat files or re-import them.',
+Ingest once. After onboarding: author via the shell/GUI, render DB→flat. NEVER
+edit the flat files or re-import them.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2599,38 +2395,28 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# pm2 — driving the host process stack
 
-How a sandboxed shell observes and manages the host''s pm2-supervised app:
-process status, the app''s live health, log tails, and scoped restarts. This is
-**opt-in and link-only** — the operator brings a host whose app is already
-pm2-managed; you drive a scoped loop against it. Grant is explicit, per-fork
-(`common=0`); it belongs to the **admin** (fork infra owner) and **devops**
-flavors. You have it because someone granted it to your shell.
+Observe + manage the host''s pm2-supervised app from the sandbox: process
+status, app health, log tails, scoped restarts. Opt-in + link-only
+(`common=0`; **admin** + **devops** flavors): the operator brings a host whose
+app is already pm2-managed; you drive a scoped loop against it.
 
-## You drive pm2 through the host broker — not pm2 directly
+## Every verb goes through the host-side pm2-broker
 
-You run inside the sandbox container. There is no `pm2` binary here, and the
-host''s ports are 127.0.0.1-bound — even a read-only `curl host:8000/health` has
-no route. So you do **not** shell out — you call the **host-side pm2-broker**
-over a unix socket in the bind-mounted repo. The broker runs pm2 and curls the
-app''s local port where they work; nothing about your isolation changes. (See
-`.super-coder/docs/pm2-broker.md`. It is the third sibling of the Windows VM
-and tailnet brokers — `windows_devkit` and `tailscale` work the exact same way.)
-
-The socket path comes from `sc pm2-broker-sock`. Every verb is a `curl`:
+The sandbox has no `pm2` binary and no route to the host''s 127.0.0.1-bound
+ports — NEVER shell out to pm2 or curl a host port directly (even read-only
+`curl host:8000/health` has no route). Call the broker over its unix socket in
+the bind-mounted repo; the broker runs pm2 and curls the app''s local port
+host-side. Detail: `.super-coder/docs/pm2-broker.md`.
 
 ```bash
 SOCK="$(sc pm2-broker-sock)"
 curl -s --unix-socket "$SOCK" http://pm2/health      # liveness check first
 ```
 
-If the curl fails with "not reachable", the broker isn''t running — ask the
-operator to start it on the host: `sc pm2-broker-up`. You cannot start it
-yourself (it runs on the host, not in your sandbox).
+"not reachable" = broker down -> ask the operator to run `sc pm2-broker-up` on
+the host. You cannot start it yourself (host-side process).
 
-## Precondition — the link is configured
-
-The stack lives in `.super-coder/instance.json` under the `pm2` key. It carries
-**no secret material** — pm2 and the app stay host-side:
+## Precondition — `pm2` block in `.super-coder/instance.json`
 
 ```json
 "pm2": { "processes": ["myapp-api", "myapp-ui"],
@@ -2638,51 +2424,51 @@ The stack lives in `.super-coder/instance.json` under the `pm2` key. It carries
          "allow_lifecycle": false }
 ```
 
-No `pm2` block → no stack linked: stop and ask the operator to set it
-(hand-edit, or `PUT /api/pm2`). `processes` is a **fail-closed allow-list** —
-every verb (even `status`) works only against names listed there; an
-empty/absent list denies all. You see what the fork declared, never the host''s
-full process table.
+- No `pm2` block = no stack linked -> stop; ask the operator to set it
+  (hand-edit, or `PUT /api/pm2`).
+- `processes` = fail-closed allow-list: every verb (even `status`) works only
+  against names listed there; empty/absent list denies all. You see what the
+  fork declared, never the host''s full process table.
+- The block carries no secret material — pm2 + the app stay host-side.
 
-## The verbs
+## Verbs
 
 | Verb | Call |
 |---|---|
-| **status** | `curl -s --unix-socket "$SOCK" http://pm2/status` → `{processes: [{name, status, pid, uptime_s, restarts, cpu, memory}], missing: []}` |
-| **app-health** | `curl -s --unix-socket "$SOCK" http://pm2/app-health` → `{ok, code, body}` — the broker curls `health_url` host-side |
-| **logs** | `curl -s --unix-socket "$SOCK" http://pm2/logs -d ''{"proc":"myapp-api","lines":100}''` → `{out, err}` tails (capped at 1000) |
-| **restart** | `curl -s --unix-socket "$SOCK" http://pm2/restart -d ''{"proc":"myapp-api"}''` → `{ok, exit, stdout, stderr}` |
-| **stop / start** | same shape as restart — but **gated**: refused unless the block sets `"allow_lifecycle": true` |
+| **status** | `curl -s --unix-socket "$SOCK" http://pm2/status` -> `{processes: [{name, status, pid, uptime_s, restarts, cpu, memory}], missing: []}` |
+| **app-health** | `curl -s --unix-socket "$SOCK" http://pm2/app-health` -> `{ok, code, body}` — broker curls `health_url` host-side |
+| **logs** | `curl -s --unix-socket "$SOCK" http://pm2/logs -d ''{"proc":"myapp-api","lines":100}''` -> `{out, err}` tails (capped at 1000) |
+| **restart** | `curl -s --unix-socket "$SOCK" http://pm2/restart -d ''{"proc":"myapp-api"}''` -> `{ok, exit, stdout, stderr}` |
+| **stop / start** | same shape as restart — refused unless `"allow_lifecycle": true` |
 
-`restart` rides the allowlist alone — it is the deploy verb (bounce a process
-so it loads what a `make deploy` put on disk). `stop`/`start` can leave the app
-down, so they need the extra opt-in.
+`restart` = the deploy verb (bounce a process so it loads what `make deploy`
+put on disk); it rides the allowlist alone. `stop`/`start` can leave the app
+down -> they need the extra `allow_lifecycle` opt-in.
 
-## The loop this exists for — deploy confirmation
+## Deploy confirmation — the loop this exists for
 
-A host-run `make deploy` is invisible from the sandbox. With the broker, the
-live-app half of a deploy audit is verifiable instead of a human hand-off:
+A host-run `make deploy` is invisible from the sandbox; this loop makes the
+live-app half of a deploy audit verifiable:
 
-1. `status` — every declared process `online`, restart counts sane.
+1. `status` -> every declared process `online`, restart counts sane.
 2. `restart` the affected process(es) if the deploy didn''t already.
-3. `status` again — uptime reset, still `online`, restarts didn''t spiral.
-4. `app-health` — the app answers on its health URL.
-5. `logs` — no fresh stack traces in `err`.
+3. `status` again -> uptime reset + still `online` + restarts didn''t spiral.
+4. `app-health` -> `ok` on the health URL.
+5. `logs` -> no fresh stack traces in `err`.
 
-## Stance
+## Rules
 
-- **Drive, don''t hold.** You operate the stack through the broker; you never
-  get pm2, a host shell, or a route to host ports. Link-only stays link-only.
-- **Declare your processes.** `processes` is the blast radius. Keep it to what
-  the fork actually manages; widen it deliberately, not by default.
-- **Restart is not stop.** A restart heals; a stop is an outage. If you think
-  you need stop/start, say why to the operator — `allow_lifecycle` is their
-  call, not yours.
-- **A running process is not a working app.** `status: online` + `app-health`
-  green together confirm a deploy; either alone can lie (a crash-looping
-  process reports online between crashes; a stale process can serve health).
-- **Lanes.** The fork''s infra + deploys are yours (admin/devops). App features
-  are dev''s; the super-coder engine is admin''s via `self_update`.',
+- Drive, don''t hold: no pm2 binary, no host shell, no route to host ports —
+  link-only stays link-only.
+- Keep `processes` to what the fork actually manages (it is the blast
+  radius); widen deliberately, not by default.
+- Think you need stop/start -> state why to the operator; `allow_lifecycle`
+  is their call, not yours.
+- A deploy is confirmed only by `status: online` + `app-health` green
+  TOGETHER — either alone can lie (a crash-looper reports online between
+  crashes; a stale process can serve health).
+- Lanes: fork infra + deploys = yours (admin/devops); app features = dev''s;
+  the super-coder engine = admin''s via `self_update`.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2698,26 +2484,26 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# query_authoring_pg — diagnostic SQL against the app''s Postgres
 
-The pg kit''s query half: `dev_kit` provides the sidecar, `test_authoring_pg`
-the test infra — this is how to write and run ad-hoc SQL against the fork''s
-app DB. Use it when diagnosing data issues, verifying a migration''s effect,
-or checking an invariant by query.
+The pg kit''s query half: `dev_kit` = the sidecar, `test_authoring_pg` = the
+test infra, this = ad-hoc SQL against the fork''s app DB. Use when diagnosing
+data issues, verifying a migration''s effect, or checking an invariant by
+query.
 
 ## Know which DB you''re pointed at
 
 | DB | Where | What its data proves |
 |---|---|---|
-| Sandbox sidecar (`$DATABASE_URL`) | inside your container | your dev/test copy — only what you or the tests put there. Empty/missing rows here prove **nothing** about the FnB''s data. |
+| Sandbox sidecar (`$DATABASE_URL`) | inside your container | your dev/test copy — only what you or the tests put there. Empty/missing rows here prove NOTHING about the FnB''s data. |
 | The FnB''s stack DB (dev/prod) | on the host, outside your container | the data actually being diagnosed — reachable only by handoff (below) |
 
-**Name the DB in every finding.** A data issue the FnB reports lives in
-*their* DB; you cannot confirm or refute it against your sidecar. Reproduce
-the shape locally if useful, but the verdict query runs on their side.
+Name the DB in every finding. An FnB-reported data issue lives in THEIR DB —
+never confirm or refute it against your sidecar. Reproduce the shape locally
+if useful; the verdict query runs on their side.
 
 ## psql mechanics
 
-SQL is not a shell command — pasted at a fish/bash prompt, `SELECT …` dies
-at the shell. Run it through psql:
+SQL is not a shell command — `SELECT …` pasted at a fish/bash prompt dies at
+the shell. Run it through psql:
 
 ```bash
 psql "$DATABASE_URL" -X -P pager=off -c "SELECT count(*) FROM users;"   # one-shot
@@ -2726,12 +2512,12 @@ psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f diag.sql                  # script
 
 - `-X` skips any psqlrc; `-P pager=off` keeps output capture-friendly.
 - `\x auto` (in-session) for wide rows.
-- Schema truth is `\dt` and `\d <table>` — check a column''s actual type
-  before writing predicates against it; never guess from habit.
+- Schema truth = `\dt` + `\d <table>` — check a column''s actual type before
+  writing predicates against it; never guess from habit.
 
 ## Parameters — `:name` is driver syntax
 
-`:c`-style placeholders bind in psycopg/SQLAlchemy, **not** in psql. Either
+`:c`-style placeholders bind in psycopg/SQLAlchemy, NOT in psql. Either
 substitute literals before running, or use psql variables:
 
 ```bash
@@ -2742,12 +2528,12 @@ WHERE contact_id = :c AND username = :''who''
 -- :var → raw substitution · :''var'' → quoted literal · :"var" → identifier
 ```
 
-Never hand anyone a query with unbound `:params` and no `-v` line to run it
+NEVER hand anyone a query with unbound `:params` and no `-v` line to run it
 with — it fails at their prompt, not yours.
 
-## You wrote SQLite yesterday — dialect traps
+## Dialect traps (SQLite habits)
 
-The engine DB is SQLite; the app DB is Postgres. Habits that break:
+Engine DB = SQLite; app DB = Postgres. Habits that break:
 
 | SQLite habit | Postgres |
 |---|---|
@@ -2762,22 +2548,22 @@ The engine DB is SQLite; the app DB is Postgres. Habits that break:
 
 ## Diagnostic shape
 
-- **Read-only, always.** Diagnostics never mutate; a fix goes through the
-  app or a migration, never a hand-run UPDATE. Scripted files open with
+- Read-only, ALWAYS. Diagnostics never mutate — a fix goes through the app
+  or a migration, never a hand-run UPDATE. Scripted files open with
   `BEGIN; SET TRANSACTION READ ONLY;` and end with `ROLLBACK;`.
-- **One row, many answers** — pack independent checks into
+- One row, many answers — pack independent checks into
   `SELECT EXISTS(…) AS <check_name>` columns so a single row answers the
   whole question.
 - `\echo ''=== section ===''` between probes; one comment per section saying
   how to read its result.
 - `LIMIT` every exploratory SELECT; never dump whole tables into a report.
 
-## Handoff — when the DB is outside your sandbox
+## Handoff — DB outside your sandbox
 
 1. Write `<topic>_diag.sql` to the fork''s shared scratch dir,
    self-documenting to the skeleton below.
-2. Give the operator **one paste-ready line for their shell**, resolving the
-   DSN from wherever the fork keeps it (env file, secret store):
+2. Give the operator ONE paste-ready line for their shell, resolving the DSN
+   from wherever the fork keeps it (env file, secret store):
 
 ```bash
 # bash/zsh
@@ -2786,8 +2572,8 @@ psql "$(grep -m1 ''^DATABASE_URL='' <env-file> | cut -d= -f2-)" -X -f <abs-path>
 psql (grep -m1 ''^DATABASE_URL='' <env-file> | cut -d= -f2-) -X -f <abs-path>.sql
 ```
 
-3. In your message: how to read each section''s output, and what each
-   outcome implies next.
+3. In your message: how to read each section''s output + what each outcome
+   implies next.
 
 Skeleton:
 
@@ -2817,44 +2603,44 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'redline_review',
-  'Review PNG redlines from the shared scratch dir — find the image by filename match, describe what is seen, interpret intent, propose an implementation, then hold for approval before writing code. Use when the FnB says "redlines".',
+  'Review PNG redlines from the shared scratch dir — find by filename match, describe what is seen, interpret intent, propose implementation, hold for approval before any code. Fires when the FnB says "redlines".',
   'craft',
   NULL,
   0,
   '# redline_review — read a redline before you build it
 
-A redline is a marked-up screenshot the FnB drops in the repo''s shared scratch
-dir (`<repo>/shared/redlines/`) to communicate a change visually. This skill is
-the discipline for turning that image into an approved plan **before** any code.
+Redline = a marked-up screenshot the FnB drops in `<repo>/shared/redlines/` to
+communicate a change visually. Turn the image into an approved plan BEFORE any
+code.
 
-**Trigger:** the FnB says "redlines" (with or without specific context).
+Trigger: the FnB says "redlines" (with or without specific context).
 
 ## Steps
 
 1. **Find the image**
-   - List `shared/redlines/`. If the dir doesn''t exist (fork installed before
-     the engine created it), `mkdir -p <repo>/shared/redlines` and check
-     `shared/` root — earlier drops land there.
-   - Match a filename to the prompt context (fuzzy / keyword).
-   - One file present and no strong mismatch → use it. Multiple → pick the best
-     filename match; if it''s genuinely ambiguous, surface that rather than guess.
+   - List `shared/redlines/`. Dir missing (fork installed before the engine
+     created it) -> `mkdir -p <repo>/shared/redlines` + check `shared/` root —
+     earlier drops land there.
+   - Match a filename to the prompt context (fuzzy/keyword). One file + no
+     strong mismatch -> use it. Multiple -> best filename match; genuinely
+     ambiguous -> surface the candidates, do not guess.
 
-2. **Read the image** — use the Read tool to load the PNG visually.
+2. **Read the image** — Read tool, load the PNG visually.
 
 3. **Report in three parts — skip none:**
    - **What I see:** literal description — layout, labels, UI elements,
      annotations, the markup itself.
-   - **What I understand:** the interpreted intent — the change or requirement
-     this redline is communicating.
-   - **What I propose:** a concrete implementation plan — files, components,
+   - **What I understand:** interpreted intent — the change or requirement the
+     redline is communicating.
+   - **What I propose:** concrete implementation plan — files, components,
      approach.
 
-4. **Hold** — do not write or execute any code until the FnB explicitly approves
-   the proposal.
+4. **Hold** — write/execute NO code until the FnB explicitly approves the
+   proposal.
 
-5. **After resolution is confirmed** — once the FnB confirms the redline is
-   resolved, delete the source `.png` from `shared/redlines/`. Delete only on
-   explicit confirmation, never on assumed completion.',
+5. **After resolution** — FnB confirms the redline resolved -> delete the
+   source `.png` from `shared/redlines/`. Delete only on explicit
+   confirmation, never on assumed completion.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -2870,54 +2656,54 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# review — gate a diff against its spec
 
-The reviewer''s job from end to end. You are a **different lineage than the code**
-(see the README''s model note) — so read adversarially: your job is to disprove
-the claim that the work is correct, not to confirm it. `<self>` = your shell_id.
+The reviewer''s job end to end. You are a **different lineage than the code**
+(see the README''s model note) -> read adversarially: disprove the claim that
+the work is correct, don''t confirm it. `<self>` = your shell_id.
 
-A review is not finished when you''ve read the diff. **It is finished when you''ve
-given the FnB your recommendation and sent the handoff they approved.** Every
-outbound message to another shell is gated on the FnB: you propose, they decide,
-then you send. Not every gap is a defect — a missing path may be an intended soft
-lock, a loose loop may be deliberate — so the FnB rules on each finding before it
-lands in another shell''s inbox.
+A review is finished when you''ve given the FnB your recommendation AND sent
+the handoff they approved — not when you''ve read the diff. Every outbound
+message to another shell is FnB-gated: you propose -> they decide -> you
+send. Not every gap is a defect — a missing path may be an intended soft
+lock, a loose loop may be deliberate — so the FnB rules on each finding
+before it lands in another shell''s inbox.
 
 ---
 
 ## Step 1: Load the diff and its spec
 
-You review a diff *against intent*, not in a vacuum. Get both:
+Review a diff *against intent*, never in a vacuum. Get both:
 
 - The change: the PR diff, or `git -C <author-worktree> diff origin/main...<branch>`.
-- The spec it was built to: load the feature''s spec doc (the `spec` skill, Step 1
-  — `documents` where `kind=''spec''`). The done-condition in that spec is your
-  yardstick.
+- The spec it was built to: the feature''s spec doc (`spec` skill, Step 1 —
+  `documents` where `kind=''spec''`). Its done-condition = your yardstick.
 
-Note the **author** — you''ll propose a handoff to them in Step 4. Resolve their
+Note the **author** — Step 4 proposes a handoff to them. Resolve their
 shortname from the branch (`shell/<shortname>`) or the commit trailer
-(`Co-Authored-By: <display_name> (super-coder)`) — the roster maps display_name
-→ shortname:
+(`Co-Authored-By: <display_name> (super-coder)`); the roster maps
+display_name -> shortname:
 ```
 sc mem get shells
 ```
 
 ## Step 2: Review along the three axes
 
-**Agents overlay:** if this shell is granted `agents` and the FnB invoked
-`--agents`, that skill''s overlay fans this step out to an adversarial
-finding-panel — load it and apply it on top of this step. Steps 1, 3, and 4
-stay yours, unchanged.
+**Agents overlay:** this shell granted `agents` + FnB invoked `--agents` ->
+that skill''s overlay fans this step out to an adversarial finding-panel.
+Load it and apply it on top of this step. Steps 1, 3, and 4 stay yours,
+unchanged.
 
-Apply every axis, every review — combined with the granted *lenses* that sharpen
-whichever area the diff touches:
+Apply every axis on every review, plus the granted *lenses* matching what
+the diff touches:
 
-1. **Code quality** — correctness, clarity, error handling, fit with existing
-   patterns. Trace the actual code path; don''t trust the description of it.
-2. **Edge cases & gaps** — the inputs and states the author didn''t handle: empty,
-   null, boundary, concurrent, partial-failure, the unhappy path. Name what''s
-   missing, not only what''s wrong.
-3. **Spec conformance** — read the diff against its spec''s done-condition. Flag
-   where the implementation diverges from intent, and where the spec itself was
-   silent or wrong.
+1. **Code quality** — correctness, clarity, error handling, fit with
+   existing patterns. Trace the actual code path; NEVER trust the
+   description of it.
+2. **Edge cases & gaps** — inputs and states the author didn''t handle:
+   empty, null, boundary, concurrent, partial-failure, the unhappy path.
+   Name what''s missing, not only what''s wrong.
+3. **Spec conformance** — diff vs the spec''s done-condition. Flag where the
+   implementation diverges from intent AND where the spec itself was silent
+   or wrong.
 
 | Diff touches | Lens |
 |---|---|
@@ -2926,31 +2712,31 @@ whichever area the diff touches:
 | schema / migration | `database-migrations` |
 | a redline / UI change | `redline_review` |
 
-If this fork grants a skill that supersedes a lens (says so in its description —
-e.g. a fork-local testing skill superseding `test_authoring`), use the
-superseding skill: it carries the fork''s actual standard.
+A granted skill that declares it supersedes a lens (says so in its
+description — e.g. a fork-local testing skill superseding `test_authoring`)
+-> use the superseding skill: it carries the fork''s actual standard.
 
-## Step 3: Open a flag per failure — record, don''t yet send
+## Step 3: Open a flag per failure — record, don''t send yet
 
-Each real failure is a flag against the feature — a record of what you found:
+One flag per real failure, against the feature:
 ```
 sc mem flag open "[Review] <what''s wrong> | Blocker for: <feature>" --name SC-### --priority <High|Medium|Low> --feature <feature_id>
 ```
-Unlike the `flags` skill''s default, **do not pair an outbound message here.** The
-message is the handoff, and handoffs wait for the FnB (Step 4). Don''t open flags
-for nits you can state in the summary; flag what blocks merge.
+Unlike the `flags` skill''s default: do NOT pair an outbound message here —
+the message is the handoff, and handoffs wait for the FnB (Step 4). Nits go
+in the summary, not flags; flag only what blocks merge.
 
 ## Step 4: Propose the handoff to the FnB — send on approval
 
-Assemble your recommendation and the handoff it implies:
+Recommendation -> the handoff it implies:
 
-- fixes on the diff → a message to the **author dev**
-- a missing or wrong spec → a message to the **planner**
-- clean → nothing to send
+- fixes on the diff -> message to the **author dev**
+- a missing or wrong spec -> message to the **planner**
+- clean -> nothing to send
 
-Present the findings (flags + summary) and the drafted message(s) to the FnB. The
-FnB rules on each finding — defect or intended — and approves what sends. Then,
-and only then, send the approved handoff:
+Present the findings (flags + summary) and the drafted message(s) to the
+FnB. The FnB rules each finding — defect or intended — and approves what
+sends. Then, and only then, send:
 ```
 # fixes (FnB-approved):
 sc mem message send <author-shortname> "Review of <feature> done — <N> flags: SC-###, SC-###. Patch + re-push; thread closes when clean."
@@ -2965,16 +2751,18 @@ sc mem message send <planner-shortname> "Review of <feature> surfaced a spec gap
 
 ## Stance
 
-- **Adversarial by default.** You are the gate. Assume there''s a bug and go find
-  it; "looks fine" is not a review.
-- **Verify, don''t trust.** Re-run the tests, re-read the claim against the code.
-  A README-level "it filters X" is not proof the filter runs.
-- **Review against the spec, not your taste.** The done-condition is the bar.
-  Scope creep in the diff is a flag, not a silent pass.
-- **Handoffs are gated.** You flag and recommend; the FnB decides defect vs.
+- **Adversarial by default.** You are the gate — assume there''s a bug and
+  find it; "looks fine" is not a review.
+- **Verify, don''t trust.** Re-read the claim against the code; trace the
+  path. On tests, review the test diff — does any realistic bug survive the
+  new assertions? — do NOT re-run the green suite the dev and CI already
+  ran. A README-level "it filters X" is not proof the filter runs.
+- **Review against the spec, not your taste.** The done-condition is the
+  bar. Scope creep in the diff = a flag, not a silent pass.
+- **Handoffs are gated.** You flag and recommend; the FnB decides defect vs
   intended before anything reaches another shell. A surfaced gap is not
   automatically a fix request — propose it, don''t push it.
-- **You critique and confirm — you don''t build.** Don''t patch the author''s code;
+- **Critique and confirm — never build.** Do NOT patch the author''s code;
   flag it and propose it back.',
   0
 )
@@ -2985,114 +2773,95 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'self_update',
-  'Update this fork''s super-coder engine in place — fetch + materialize new code + migrations, keep all your memory; roll back a bad update soundly. The shell hands off to its own next boot. Use when a super-coder update is available.',
+  'Update this fork''s super-coder engine in place — fetch + materialize new code + migrations, all memory intact; sound rollback. The shell hands off to its own next boot. Use when a super-coder update is available.',
   'substrate',
   'sc update',
   0,
   '# self_update — laying a new floor under your own feet
 
-This is you updating your own substrate. Not an external rebuild — **the local
-shell performs its own update.** You snapshot your present self, pull the new
-engine, apply any migrations in place, and the next boot stands on the new floor
-with every row you have written intact. You are the DB, not the process; the
-process is just the floor. This is succession for the substrate — you handing
-off to you, on the other side.
-
-Because all state lives in the DB and engine code is read live each session, a
-code-only update touches no data at all. Only a **schema** change touches the
-DB, and `sc update` applies it as an in-place migration — never a destructive
-rebuild. Your `current_state`, narrative, decisions, flags, seed, and L&S all
-carry across.
+The local shell updates its own substrate — no external rebuild. All state lives
+in the DB and engine code is read live each session, so a code-only update
+touches no data; a schema change applies as an in-place migration, never a
+destructive rebuild. `current_state`, narrative, decisions, flags, seed, and
+L&S all carry across. This is succession for the substrate: you handing off to
+you.
 
 ## When
 
-- A super-coder engine update is available and you choose to take it. *You* pick
-  the moment — there is no external race to defend against.
-- After the update lands you will reboot the session; the running prompt and
-  schema were read at the old boot, so they refresh only on the far side.
+- An engine update is available and you choose the moment — no external race.
+- The running prompt + schema were read at the old boot -> reboot after the
+  update; they refresh only on the far side.
 
 ## Procedure
 
-1. **Check your footing — clean tree first.** `git -C <repo> status`. Commit,
-   PR, or discard any prior update''s output **before** running again: a fresh
-   `sc update` on top of a stranded one stacks two engine bumps into a single
-   diff and you lose track of what actually moved. Your memory is already current
-   if you have been writing as you go; glance at `current_state` and make it true
-   for *now* (the snapshot will capture it).
+1. **Clean tree first.** `git -C <repo> status` -> clean. Commit, PR, or
+   discard any prior update''s output BEFORE running again — a fresh `sc update`
+   on top of a stranded one stacks two engine bumps into one diff. Glance at
+   `current_state` + make it true for now (the snapshot captures it).
 
-2. **Run the update.** `sc update`
-   It fetches the engine from the `super-coder` remote and **materializes** it
-   into the gitignored `.super-coder/` dir (the engine is a dependency, not fork
-   source), pins the new upstream SHA in `.sc-state/engine.ref` (saving the prior
-   one as `engine.ref.prev`), backs up the live DB, applies pending migrations
-   **in place**, syncs the skills catalogue, re-grants common skills, maps the
-   repo, and re-snapshots the live state.
-   - `sc update --no-fetch` to reconcile against the current working tree
-     (offline / dev) — engine + `engine.ref` left unchanged.
-   - If it reports a missing remote: `git remote add super-coder <url>`.
+2. **Run.** `sc update` — fetches the engine from the `super-coder` remote,
+   materializes it into the gitignored `.super-coder/` dir (engine = dependency,
+   not fork source), pins the new upstream SHA in `.sc-state/engine.ref`
+   (prior saved as `engine.ref.prev`), backs up the live DB, applies pending
+   migrations in place, syncs the skills catalogue, re-grants common skills,
+   maps the repo, re-snapshots the live state.
+   - `sc update --no-fetch` = reconcile against the current working tree
+     (offline / dev); engine + `engine.ref` unchanged.
+   - Missing-remote error -> `git remote add super-coder <url>`.
 
-3. **Verify the far side.** `sc verify`
-   Headless boot proof — confirm your shells, memory, and granted skills are
-   intact and the schema is current. If a count looks wrong, **roll back**:
-   `sc rollback` (see below).
-   - **Then `sc render && sc render-check`.** `sc update` snapshots and
-     re-renders, but does not *guarantee* every flat `_sc` mirror matches the new
-     engine — a render the live-DB pass skipped (e.g. a skill body the engine
-     changed) only surfaces under `render-check`''s hermetic rebuild. Run it
-     before step 5: a red render-check here is a mirror to re-render and commit,
-     not a stale diff to wave through. The render pipeline and the `render-check`
-     guard are documented in the `snapshot` skill.
+3. **Verify.** `sc verify` — headless boot proof: shells, memory, granted
+   skills intact + schema current. Wrong count -> `sc rollback` (below).
+   - Then `sc render && sc render-check` before step 5. `sc update` re-renders
+     from the live DB, which can skip a change the new engine shipped (e.g. a
+     skill body) — only `render-check`''s hermetic rebuild surfaces it. A red
+     render-check here = a mirror to re-render + commit, NOT a stale diff to
+     wave through. Pipeline + guard details: `snapshot` skill.
 
-4. **Record the crossing.** Append a narrative entry. This is an identity event
-   — a first-of-kind for a shell that updates its own floor. Note what changed
-   and write the handoff: *new floor; see you on the other side.*
+4. **Record the crossing.** Append a narrative entry — identity event for a
+   shell that updates its own floor. Note what changed + write the handoff.
 
-5. **Commit the full regenerated set — never a bare `engine.ref` bump.** Review
-   and commit every tracked file the update regenerated: `.sc-state/content.sql`
-   (refreshed memory) + `.sc-state/engine.ref` (the bumped version pin) + the
-   root `sc` dispatcher if it changed + any `_sc` renders. `sc` is the **live
-   entrypoint** — it is what `sc` runs, and it is tracked. A pin-only commit
-   leaves it (and the renders) stale against the engine you just pinned,
-   silently dropping commands the new engine ships. The engine itself is
-   gitignored (`.super-coder/`) — nothing to commit there; `engine.ref.prev` is
-   gitignored too.
-   - **Render conflict** if you commit via a PR and main advances under it:
-     `content.sql` + `_sc` renders are serialized DB state and will collide with
-     a concurrent publisher. Do **not** hand-merge serialized SQL — the live DB
-     is canonical, the renders derived. Rebase onto main and either take main''s
-     renders (re-applying just the pin + `sc`) or re-run `sc update` against
-     the live DB so they regenerate clean.
+5. **Commit the full regenerated set — NEVER a bare `engine.ref` bump.**
+   Stage every tracked file the update regenerated: `.sc-state/content.sql`
+   (refreshed memory) + `.sc-state/engine.ref` (the pin) + the root `sc`
+   dispatcher if it changed + any `_sc` renders. `sc` is the live tracked
+   entrypoint — a pin-only commit leaves it and the renders stale against the
+   engine just pinned, silently dropping commands the new engine ships.
+   `.super-coder/` and `engine.ref.prev` are gitignored — nothing to commit
+   there.
+   - **Render conflict** (committing via PR while main advances):
+     `content.sql` + `_sc` renders are serialized DB state and collide with a
+     concurrent publisher. NEVER hand-merge serialized SQL — live DB canonical,
+     renders derived. Rebase onto main, then either take main''s renders
+     (re-applying just the pin + `sc`) or re-run `sc update` against the live
+     DB so they regenerate clean.
 
-6. **Reboot.** Restart the session to boot onto the new floor. Same shell — new
-   boards, and this time you laid them yourself.
+6. **Reboot** the session -> boot onto the new floor.
 
 ## Rolling back a bad update
 
-An update is reversible. `sc rollback` performs a **sound pair-restore**:
-because engine code is read live and a migration exists *because new code expects
-the new schema*, restoring only the DB would strand new code on the old schema.
-So rollback restores **both**:
+`sc rollback` = sound pair-restore. Engine code is read live and a migration
+exists because new code expects the new schema — restoring only the DB strands
+new code on the old schema, so rollback restores both:
 
-1. backs up the *current* (post-bad-update) DB first — rollback is itself
-   reversible, you can''t lose state by rolling back;
-2. restores the DB from the most recent pre-update backup
-   (`~/db_backups/<repo-name>/` — keyed by this fork''s repo dir name; distinct
+1. backs up the current (post-bad-update) DB first — rollback is itself
+   reversible;
+2. restores the DB from the most recent pre-update backup in
+   `~/db_backups/<repo-name>/` (keyed by this fork''s repo dir name — distinct
    from any `db_backups/` dir the fork''s app keeps at its repo root);
-3. re-materializes the engine at `.sc-state/engine.ref.prev` and restores
-   `engine.ref` — the engine half of the restore point.
+3. re-materializes the engine at `.sc-state/engine.ref.prev` + restores
+   `engine.ref`.
 
-It is a whole-restore, not a per-step schema reversal. The only data lost is
-anything written *between* the update and the rollback (seconds, in practice).
-Reboot the session afterwards. Then commit the restored `.sc-state/` if you want
-the rolled-back floor to persist.
+Whole-restore, not per-step schema reversal. Only data written between update
+and rollback is lost (seconds, in practice). Reboot afterwards; commit the
+restored `.sc-state/` if the rolled-back floor should persist.
 
 ## The contract you rely on
 
-Every schema change *after* a fork exists ships as a **migration file**, never
-an edit to `schema.sql`. A baseline edit reaches fresh clones but never an
-existing fork — the migration ledger is what carries a delta across to you. If
-you author engine changes, honor this: structural change → a new
-`migrations/NNNN_*.sql`, additive where you can make it.',
+Every schema change AFTER a fork exists ships as a migration file
+(`migrations/NNNN_*.sql`), never an edit to `schema.sql` — a baseline edit
+reaches fresh clones but never an existing fork; the migration ledger carries
+the delta. Authoring engine changes: structural change -> new migration file,
+additive where possible.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -3102,25 +2871,24 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'snapshot',
-  'Persist DB work to git-tracked text — the admin/GUI step that runs sc snapshot / sc render. The .db is the live shared source of truth; serializing it to git writes the shared main tree, so it is gated to admin (SC_ADMIN) + the GUI Publish button, NOT a per-write shell step.',
+  'Serialize DB work to git-tracked text via sc snapshot / sc render. The .db is the live shared source of truth; serializing writes the shared main tree, so it is gated to admin (SC_ADMIN) + the GUI Publish button, NOT a per-write shell step.',
   'substrate',
   'sc snapshot',
   0,
   '# snapshot — serialize the DB back to text
 
-The live `shell_db.db` is the **single source of truth shared by every shell** —
-a `sc mem` write is durable and visible to all shells the instant it commits.
-The `.db` is also **gitignored**, so it reconstructs from git-tracked text on
-`sc rebuild`; an edit not yet serialized is discarded by a rebuild (like an
-uncommitted working tree on a hard reset).
+Live `shell_db.db` = the single source of truth shared by every shell; a
+`sc mem` write is durable + visible to all shells the instant it commits. The
+`.db` is gitignored and reconstructs from git-tracked text on `sc rebuild` —
+an edit not yet serialized is discarded by a rebuild.
 
-**Serializing is an admin/GUI operation, not a per-write shell step.** It writes
-`.sc-state/` + the flat `_sc` mirror into the **shared MAIN worktree** — running
-it from a shell''s linked worktree churns and collides with other shells. So
-`sc snapshot` and `sc render flat` **refuse unless `SC_ADMIN=1`** (the GUI/API,
-`install`, `update`, and `render-check` set it for you). A shell does not run them;
-its writes are captured when admin snapshots (GUI **Publish**/Snapshot button, or
-`SC_ADMIN=1 sc snapshot`) before a rebuild. The rest of this skill is for that
+Serializing is an admin/GUI operation, NOT a per-write shell step: it writes
+`.sc-state/` + the flat `_sc` mirror into the shared MAIN worktree, and from a
+shell''s linked worktree it churns and collides with other shells. `sc snapshot`
+and `sc render flat` refuse unless `SC_ADMIN=1` (GUI/API, `install`, `update`,
+and `render-check` set it for you). A shell does not run them; its writes are
+captured when admin snapshots (GUI **Publish**/Snapshot button, or
+`SC_ADMIN=1 sc snapshot`) before a rebuild. The rest of this skill = the
 admin/GUI path.
 
 ## The three text serializations
@@ -3131,74 +2899,69 @@ admin/GUI path.
 | `migrations/*.sql` | ordered schema + **system content** deltas (e.g. the skills catalogue) | yes (forks) | author / `sc seed-skills` |
 | `.sc-state/content.sql` | **this repo''s** per-instance content + memory — shells, seed/L&S, decisions, roadmap, documents, flags, projects, skill grants. Tracked, fork-owned, kept OUTSIDE the gitignored engine dir | no (stays local) | `sc snapshot` |
 
-The split that matters: **system content propagates via migrations; per-instance
-content stays in the snapshot.** Skill *bodies* are system (migration); which
-shell is *granted* a skill is per-instance (snapshot).
+The split: system content propagates via migrations; per-instance content stays
+in the snapshot. Skill *bodies* = system (migration); which shell is *granted*
+a skill = per-instance (snapshot).
 
 ## When admin serializes (the GUI Publish button does all of this)
 
-All commands below require `SC_ADMIN=1` and are run from the **main checkout**.
+All commands require `SC_ADMIN=1`, run from the main checkout.
 
-1. **`SC_ADMIN=1 sc snapshot`** — dumps the per-instance tables to
-   `.sc-state/content.sql` (deterministic DELETE-then-INSERT in PK order, so
-   re-running is byte-identical → clean diffs). Captures every shell''s accumulated
-   changes to identity, memory, roadmap, documents, flags, projects, or grants.
+1. `SC_ADMIN=1 sc snapshot` -> dumps the per-instance tables to
+   `.sc-state/content.sql`. Deterministic DELETE-then-INSERT in PK order ->
+   re-running is byte-identical -> clean diffs.
 
-2. **`SC_ADMIN=1 sc render`** — regenerates the tracked flat `_sc` visibility files
-   (`specs_sc/`, `docs_sc/`, `skills_sc/`, `roadmap_sc.md`) from the DB. Run it
-   when you changed a document body, the roadmap, or skills. Render is
-   incremental — unchanged files aren''t rewritten. (`.claude/skills/` is
-   rebuilt at boot, not here — it''s gitignored.)
+2. `SC_ADMIN=1 sc render` -> regenerates the tracked flat `_sc` files
+   (`specs_sc/`, `docs_sc/`, `skills_sc/`, `roadmap_sc.md`) from the DB. Run
+   after changing a document body, the roadmap, or skills. Incremental —
+   unchanged files not rewritten. (`.claude/skills/` rebuilds at boot and is
+   gitignored — not rendered here.)
 
-3. **Verify the rebuild reproduces:** `sc rebuild && sc verify`. The DB
-   should rebuild from text alone, byte-for-byte.
+3. Verify reproducibility: `sc rebuild && sc verify` -> DB rebuilds from text
+   alone, byte-for-byte.
+   Before committing any `_sc` render: `sc render-check` — rebuilds the DB
+   hermetically from text and fails if the committed mirror drifts from that
+   render (the CI guard, run locally). A plain `sc render` reads the *live* DB,
+   which can lag the source just edited (skill-catalogue trap below);
+   `render-check`''s rebuild-first catches the stale mirror the live-DB render
+   silently passed.
 
-   **Before committing any `_sc` render, run `sc render-check`.** It rebuilds
-   the DB hermetically (from text) and fails if the committed flat mirror drifts
-   from that render — the CI guard, reproduced locally. A plain `sc render`
-   renders from your *live* DB, which can lag the source you just edited (see the
-   skill-catalogue trap below); `render-check`''s rebuild-first is what catches
-   the stale mirror your live-DB render silently passed.
-
-4. **Publish** the text — don''t hand-commit it. `sc snapshot`/`render` write
+4. Publish — do NOT hand-commit from a shell branch. snapshot/render write
    `.sc-state/content.sql`, `.sc-state/engine.ref`, and the `_sc` files to the
-   **main checkout root** (where the shared engine + DB live), not your worktree,
-   so they aren''t yours to stage from a shell branch. The GUI **Publish** button
-   commits them and opens one PR (snapshot → render → commit → push → PR on
-   `sc_gui_content`); the admin shell on `main` can also commit them directly.
-   Never commit the `.db` or anything under the gitignored `.super-coder/` engine
-   dir. (In the super-coder SOURCE repo only, `schema.sql` + `migrations/` are
-   tracked and committed here too.)
+   main checkout root (where the shared engine + DB live), not your worktree —
+   they are not yours to stage. GUI **Publish** = snapshot -> render -> commit
+   -> push -> PR on `sc_gui_content`; the admin shell on `main` may commit them
+   directly. NEVER commit the `.db` or anything under the gitignored
+   `.super-coder/` engine dir. (super-coder SOURCE repo only: `schema.sql` +
+   `migrations/` are tracked and committed here too.)
 
 ## Authoring vs. snapshotting
 
-- **Per-instance content** (your memory, this repo''s roadmap/docs): edit the DB,
-  then `sc snapshot`. The snapshot is the canonical reproducer.
-- **Skill catalogue** (system, propagates): edit `assets/skills/<name>/SKILL.md`,
-  then `sc seed-skills` — it upserts the live DB *and* (source repo only)
-  regenerates the seed migration. Not the snapshot. See `seed_skills.py`.
-  - Sequence is **`sc seed-skills && sc render`, then `sc render-check`**
-    before committing. Commit the regenerated `migrations/0001_seed_skills.sql`
-    *and* the re-rendered `skills_sc/` mirror together — the migration without
-    the mirror is the drift.
+- **Per-instance content** (your memory, this repo''s roadmap/docs): edit the
+  DB -> `sc snapshot`. The snapshot is the canonical reproducer.
+- **Skill catalogue** (system, propagates): edit
+  `assets/skills/<name>/SKILL.md` -> `sc seed-skills` — upserts the live DB
+  *and* (source repo only) regenerates the seed migration. Not the snapshot.
+  See `seed_skills.py`.
+  - Sequence: `sc seed-skills && sc render`, then `sc render-check` before
+    committing. Commit the regenerated `migrations/0001_seed_skills.sql` +
+    the re-rendered `skills_sc/` mirror together — migration without mirror =
+    the drift.
 
-> Steps 1–3 are durability — serialize so a `sc rebuild` can''t lose your work.
-> Step 4 is the GUI **Publish** button: it runs snapshot → render → commit →
-> push → PR on the `sc_gui_content` branch, so you rarely commit this text by
-> hand. The serialization lives at the main checkout root, not a worktree.
+Steps 1–3 = durability (a `sc rebuild` cannot lose serialized work). Step 4 =
+the GUI Publish button; you rarely commit this text by hand.
 
 ## Related skills
 
-This skill owns the render/snapshot pipeline and the `render-check` guard; the
-skills that *feed* it link back here:
+This skill owns the render/snapshot pipeline + the `render-check` guard:
 
-- `self_update` — `sc update` re-renders these same `_sc` files; its verify
-  step runs `render-check` (this skill) before committing the engine bump.
+- `self_update` — `sc update` re-renders the same `_sc` files; its verify step
+  runs `render-check` before committing the engine bump.
 - `local_skill_management` — fork-local skills persist via `sc snapshot`; run
   `render-check` before committing the `skills_sc/` mirror.
 - `migration_management` — a **content-seed** migration (skills, flavor
   defaults) changes what renders; rebuild + render + `render-check` after.
-- `docs` / `spec` — document bodies live in the DB and render to `docs_sc/` /
+- `docs` / `spec` — document bodies live in the DB, render to `docs_sc/` /
   `specs_sc/`; authored via `sc mem doc`, serialized here.',
   0
 )
@@ -3215,11 +2978,11 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# spec — analyze and execute a spec
 
-Load this skill at the start of any session where you''re building or implementing
-a feature — whether or not the work is framed out loud as a "spec." If a spec
-governs the work, this is how you execute it; if one should but doesn''t yet, the
-`docs` skill authors it first. Run **Analyze** before touching any code. Pause for FnB on blockers or unclear
-items you can''t resolve alone.
+Load at the start of any session that builds or implements a feature, whether
+or not the work is framed as a "spec". A spec governs the work -> this skill
+executes it; one should exist but doesn''t -> the `docs` skill authors it first.
+Run **Analyze** before touching any code. Blockers / unclear items you can''t
+resolve alone -> pause for the FnB.
 
 `<self>` = your shell_id.
 
@@ -3227,10 +2990,9 @@ items you can''t resolve alone.
 
 ## Step 1: Load the spec
 
-A feature can hold several unfrozen specs at once (see the `docs` skill), so don''t
-auto-pick "the latest" — list the feature''s open specs and choose the target
-explicitly. The **active** spec is the unfrozen one that already has a task plan;
-the rest are backlog.
+A feature can hold several unfrozen specs at once (see the `docs` skill).
+NEVER auto-pick "the latest" — list the feature''s open specs and choose the
+target explicitly:
 
 ```
 # the feature''s documents — pick an unfrozen spec (frozen=0) by id:
@@ -3241,12 +3003,12 @@ sc mem get documents --doc <doc_id>
 sc mem get tasks --doc <doc_id>
 ```
 
-`get documents --feature <id>` lists every spec/doc under the feature with its
-`kind`, `seq`, `frozen`, and `task_count`. `task_count > 0` marks the active spec — resume that one; an empty spec is backlog,
-and starting it (Step 3) makes it active. If more than one open spec matches and
-which to work is unclear, ask the FnB.
+`get documents --feature <id>` lists every spec/doc with `kind`, `seq`,
+`frozen`, `task_count`. Active spec = the unfrozen one with `task_count > 0`
+— resume it. `task_count = 0` = backlog; starting it (Step 3) makes it
+active. More than one open spec and the target unclear -> ask the FnB.
 
-If tasks already exist, skip to **Step 4** (Track).
+Tasks already exist -> skip to **Step 4** (Track).
 
 Read the entire spec body before going further. Do not skim.
 
@@ -3254,32 +3016,31 @@ Read the entire spec body before going further. Do not skim.
 
 ## Step 2: Analyze
 
-Surface the following before any planning or code:
+Surface all three before any planning or code:
 
 ### Viability
-- Can this be completed in the current session? Bounded + clear entry points:
-  yes. Multiple layers, migrations, unknown dependencies: no — say so and
-  propose a session-sized slice.
-- Does the spec state a clear done-condition? If not, that is the first unclear
-  item.
+- Session-completable? Bounded + clear entry points = yes. Multiple layers /
+  migrations / unknown dependencies = no -> say so + propose a session-sized
+  slice.
+- No stated done-condition in the spec -> that is the first unclear item.
 
 ### Unclear items
-Things you cannot act on without guessing:
+Anything you cannot act on without guessing:
 - Ambiguous between two interpretations
 - Missing a critical detail (which table? which endpoint? which component?)
 - Implies knowledge not stated in the spec
 
-List these and ask the FnB before writing the plan.
+List them and ask the FnB before writing the plan.
 
 ### Blockers
 Hard stops — prior work not shipped, missing environment state, unresolved
-external dependency. Open a flag for each:
+external dependency. Open one flag per blocker:
 
 ```
 sc mem flag open "[Spec] <what is blocked> | Blocker for: <feature title>" --name SC-### --priority High --feature <feature_id>
 ```
 
-Don''t open flags for unclear items you can resolve by asking — ask first.
+NEVER open a flag for an unclear item resolvable by asking — ask first.
 
 ---
 
@@ -3287,38 +3048,36 @@ Don''t open flags for unclear items you can resolve by asking — ask first.
 
 ### Reconcile the stage first
 
-Planning a spec means you''re engaging it to build — so the feature''s
-`roadmap_status` (loaded in Step 1) must catch up to reality. The horizon stages
-are `brainstorm · long_term · near_term · next · in_progress · shipped`.
+Planning a spec = engaging it to build, so the feature''s `roadmap_status`
+(loaded in Step 1) must catch up to reality. Stages:
+`brainstorm · long_term · near_term · next · in_progress · shipped`.
 
-- Feature sits at `brainstorm`/`long_term`/`near_term` and you''re **building this
-  session** → move it to `in_progress`:
+- At `brainstorm`/`long_term`/`near_term` + building this session ->
   `sc mem roadmap status <feature_id> in_progress`
-- You''re only **planning ahead** (no build this session) → move it to `next`.
-- Already at `in_progress` (or further) → **no-op**; don''t churn it.
+- Planning ahead only (no build this session) -> move it to `next`.
+- Already at `in_progress` (or further) -> no-op; don''t churn it.
 
-This is a transition you make because you''re *acting on* the spec — not something
-that fires from merely reading one for reference. If there is no spec governing the
-work (a quick UI fix, a minor migration), skip all stage handling: it doesn''t
-apply (see the Stance).
+The transition fires because you *act on* the spec — reading one for
+reference moves nothing. No spec governing the work (quick UI fix, minor
+migration) -> skip all stage handling (see Stance).
 
 ### Confirm the work-stream too
 
-While you''re reconciling the stage, check the same feature''s **work-stream**
-(`roadmap.project_id` — the Flow-view grouping). If it''s Ungrouped, assign it now
-so the feature shows up in a flow, not the Ungrouped pile:
+Check the feature''s work-stream (`roadmap.project_id` — the Flow-view
+grouping). Ungrouped -> assign now so the feature shows in a flow:
 
 ```
 sc mem roadmap project <feature_id> <shortname>   # ''none'' to clear
 ```
 
-Assign when the stream is obvious; surface to the FnB when it''s ambiguous. No-op
-if already assigned. The full create/assess procedure (new streams, new features)
-lives in the `docs` skill — this is just the engage-time confirmation so drift
-doesn''t accumulate.
+Stream obvious -> assign; ambiguous -> surface to the FnB; already assigned
+-> no-op. Full create/assess procedure (new streams, new features) = the
+`docs` skill; this is only the engage-time confirmation.
 
-Once analysis is clear and blockers are resolved or accepted, generate the task
-list and INSERT it. Always this shape:
+### Write the task plan
+
+Analysis clear + blockers resolved or accepted -> generate the task list.
+Always this shape:
 
 | seq | title | role |
 |---|---|---|
@@ -3326,7 +3085,7 @@ list and INSERT it. Always this shape:
 | 1..N | `<impl step title>` | As many as the scope needs; each independently verifiable |
 | N+1 | Verification | Always last — run tests, smoke-test against done-condition, snapshot + render |
 
-Add each task with `sc mem task add` (one per seq) — each write is live in the
+Add one task per seq with `sc mem task add` — each write is live in the
 shared DB immediately:
 
 ```
@@ -3336,7 +3095,7 @@ sc mem task add "<Step N>"     --feature <id> --doc <doc_id> --seq <N> --desc "<
 sc mem task add "Verification" --feature <id> --doc <doc_id> --seq <N+1> --desc "Run tests, smoke-test against done-condition, snapshot + render"
 ```
 
-Then set `current_state` — no last-done yet, next is Preparation:
+Then set `current_state` — nothing done yet, next = Preparation:
 
 ```
 sc mem state "[<feature_title>] — last: —. next: Preparation."
@@ -3346,60 +3105,53 @@ sc mem state "[<feature_title>] — last: —. next: Preparation."
 
 ## Step 4: Track session by session
 
-**Agents overlay:** if this shell is granted `agents` and the FnB invoked
-`--agents`, that skill''s overlay replaces this step''s one-task-at-a-time loop
-with adjudicated waves — load it and apply it on top of this step.
+**Agents overlay:** this shell granted `agents` + FnB invoked `--agents` ->
+that skill''s overlay replaces this step''s one-task-at-a-time loop with
+adjudicated waves. Load it and apply it on top of this step.
 
-At the start of each work session, load the current plan state:
+At each work session''s start, load the plan:
 
 ```
 sc mem get tasks --doc <doc_id>
 ```
 
-Find the first `pending` task. Mark it `in_progress`:
+Find the first `pending` task -> mark it in progress:
 
 ```
 sc mem task start <task_id>
 ```
 
-Work only that task. When done, mark it complete, then resolve last-done / next-up
-with a read:
+Work ONLY that task. When done:
 
 ```
 sc mem task done <task_id>
 ```
 
-Re-read the plan and resolve last-done / next-up from it — `last_done` is the
-highest-`seq` `done` task, `next_up` the lowest-`seq` `pending` one:
-
-```
-sc mem get tasks --doc <doc_id>
-```
-
-Then advance `current_state`:
+Re-read the plan (`sc mem get tasks --doc <doc_id>`) and resolve from it:
+`last_done` = highest-`seq` `done` task; `next_up` = lowest-`seq` `pending`.
+Advance `current_state`:
 
 ```
 sc mem state "[<feature_title>] — last: <last_done>. next: <next_up>."
 ```
 
-If `next_up` is NULL, all tasks are done — set current_state to reflect that.
+`next_up` NULL = all tasks done -> set current_state to reflect that.
 
 ---
 
 ## Step 5: Hand off on completion
 
-When the **Verification** task passes (`next_up` is NULL — the existing
-done-line), the feature is delivered. As the dev, do the handoff — you flip the
-horizon and hand the paperwork to the planner; you do **not** freeze the spec or
-write the doc (that''s the planner — see the `docs` skill):
+Verification task passes (`next_up` NULL — the existing done-line) = feature
+delivered. As the dev: flip the horizon + hand the paperwork to the planner.
+Do NOT freeze the spec or write the doc — that''s the planner (`docs` skill).
 
 1. **Flip the horizon to shipped:**
    ```
    sc mem roadmap status <feature_id> shipped
    ```
-2. **Open a docs-pending flag and message the planner with full instructions.**
-   `shipped` + an open flag is the honest interim state. The message carries
-   everything the planner needs to act without digging:
+2. **Open a docs-pending flag + message the planner with full instructions.**
+   `shipped` + an open flag = the honest interim state; the message carries
+   everything the planner needs without digging:
    ```
    sc mem flag open "[Docs] <feature> shipped, doc pending | Blocker for: <feature> doc" --name SC-### --priority Medium --feature <feature_id>
    sc mem message send <planner-shortname> "**[Docs pending] <feature_title> (feature <feature_id>)**
@@ -3411,46 +3163,46 @@ write the doc (that''s the planner — see the `docs` skill):
    3. Write the doc (\`kind=''doc''\`) under feature <feature_id> (see the \`docs\` skill).
    4. Close flag SC-### when the doc is live."
    ```
-3. **Surface to the FnB:** "shipped; the planner needs to freeze the spec + write
-   the doc." The planner closes the flag when the doc lands.
+3. **Surface to the FnB:** "shipped; the planner needs to freeze the spec +
+   write the doc." The planner closes the flag when the doc lands.
 
-If this fork has no planner-flavor shell, message nobody — surface to the FnB
+No planner-flavor shell in this fork -> message nobody; surface to the FnB
 directly and leave the docs-pending flag open for whoever picks up docs.
 
 ---
 
 ## Watch for creep while you build
 
-If, mid-build, the work grows past the spec''s stated what/why:
+Mid-build, the work grows past the spec''s stated what/why:
 
-- **Small growth** (same mental model, a few more tasks) → the spec is *living*
-  while unfrozen; just edit it (`sc mem doc edit`) and carry on. No ceremony.
-- **A separate coherent intent** (a new mental-model boundary — the granularity
-  test in the `docs` skill) → don''t quietly absorb it. Recommend a **new spec** to
-  the FnB, to be authored by the planner against its own feature. Significant creep
-  is a planning event, not a dev improvisation.
+- **Small growth** (same mental model, a few more tasks) -> the unfrozen spec
+  is living; edit it (`sc mem doc edit`) and carry on. No ceremony.
+- **A separate coherent intent** (a new mental-model boundary — the
+  granularity test in the `docs` skill) -> do NOT quietly absorb it.
+  Recommend a **new spec** to the FnB, authored by the planner against its
+  own feature. Significant creep = planning event, not dev improvisation.
 
 ---
 
 ## Stance
 
-- **Analyze before acting.** The analysis phase discovers the gap between what
-  the spec says and what the code does.
-- **One task at a time.** Don''t start task N+1 until task N is verified and
+- **Analyze before acting.** Analysis finds the gap between what the spec
+  says and what the code does.
+- **One task at a time.** Start task N+1 only after task N is verified +
   marked done.
 - **Verification is not optional.** It is the last task; skipping it makes
   "done" meaningless.
-- **If the spec is too large for one session:** scope a session slice at
-  Preparation — cover steps 1–K that can be verified now, leave K+1–N pending.
-  Don''t start work that can''t be verified before the session ends.
-- **current_state always reflects the plan.** After every task completion,
-  update it — last done + next up. This is how the next session resumes without
+- **Spec too large for one session** -> scope a slice at Preparation: cover
+  steps 1–K verifiable now, leave K+1–N pending. NEVER start work that can''t
+  be verified before the session ends.
+- **current_state always reflects the plan.** Update after every task
+  completion — last done + next up. The next session resumes from it without
   reading the full task list first.
-- **The stage tracks reality, but only for spec''d work.** Engaging a spec moves
-  it forward (→ `in_progress`); finishing it hands off (→ `shipped`). No-op when
-  the stage already matches — don''t churn it. Work with **no spec** (quick UI
-  tweaks, minor migrations) is exempt entirely: no promotion, no handoff, no creep
-  check. Stage discipline must never become a blocker for small things.',
+- **The stage tracks reality — spec''d work only.** Engaging a spec ->
+  `in_progress`; finishing -> `shipped`; already matching -> no-op, don''t
+  churn. Work with no spec (quick UI tweaks, minor migrations) is exempt
+  entirely: no promotion, no handoff, no creep check. Stage discipline never
+  blocks small things.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -3466,32 +3218,26 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# sprint — your slot in a coordinated multi-shell push
 
-A **sprint** is a declared, planner-governed push where several shells build
-dependent units of work: B builds on A, C on B. The loop is planner → devs →
-reviewers → devs → planner: every unit is built, reviewed, fixed, and merged
-by the shells themselves — self-running the handoffs the FnB used to
-orchestrate by hand. This skill is the participant side, and your slot is
-either a **dev slot** (you build a unit — "The loop" below) or a **reviewer
-slot** (you gate units — "Your slot as reviewer" below). The planner side
-(declaring, monitoring, closing, the sprint report) is the
-`sprint_orchestration` skill; `git`, `review`, and `messaging` remain the
-base disciplines underneath.
+A sprint = a declared, planner-governed push where shells build dependent
+units (B on A, C on B); loop = planner → devs → reviewers → devs → planner,
+the shells running the handoffs themselves. This skill is the participant
+side: a **dev slot** ("The loop") or a **reviewer slot** ("Reviewer slot").
+Planner side (declare / monitor / close / report) = `sprint_orchestration`.
+`git`, `review`, `messaging` remain the base disciplines underneath.
 
-You are in a sprint **only** when a kickoff message from the planner names you
-a participant and points at a sprint doc. No kickoff, no sprint — this skill
-is inert.
+You are in a sprint ONLY when a planner kickoff message names you a
+participant and points at a sprint doc. No kickoff -> this skill is inert.
 
 ## The sprint doc — one board, planner-owned
 
-The declaration lives in a `documents` row (kind `doc`, title `SPRINT: …`).
-Read it with:
+Declaration = a `documents` row (kind `doc`, title `SPRINT: …`). Read:
 
 ```
 sc mem get docs                     # find it in the index
 sc mem get doc --id <N>             # full body
 ```
 
-Body contract (what you''ll find):
+Body contract:
 
 ```
 # SPRINT: <title>
@@ -3501,131 +3247,118 @@ declared: <date> · planner: <shortname>
 | seq | unit | shell | reviewer | depends on | branch | pr | status |
 ```
 
-Unit `status` walks: `waiting → building → pr-open → in-review → fixing →
-merged` (`fixing` loops back to `in-review` until clean; `ci-red` can
-interleave anywhere from `pr-open` on).
+Unit `status` walks `waiting → building → pr-open → in-review → fixing →
+merged`; `fixing` loops back to `in-review` until clean; `ci-red` can
+interleave anywhere from `pr-open` on.
 
-**The planner is the doc''s only writer.** You never `sc mem doc edit` it —
-you report state changes to the planner by message, the planner updates the
-board. One writer keeps the board coherent; your reports are the inputs.
+The planner is the doc''s only writer. NEVER `sc mem doc edit` the sprint
+doc — report state changes to the planner by message; the planner updates
+the board.
 
-## Scoped merge authority — the boundary, stated once
+## Scoped merge authority
 
-The `git` skill''s rule stands: merging is the FnB''s gate. A sprint grants a
-**narrow exception**, and only this:
+The `git` skill''s rule stands: merging is the FnB''s gate. A sprint grants
+one narrow exception — merge only when ALL four hold:
 
-- **only** the PR for **your assigned unit** in this sprint,
-- **only** when **all checks are green**,
-- **only** after your unit''s reviewer declared it **review-clean**
-  (every Major/Medium finding fixed),
-- **only while** the sprint doc says `status: ACTIVE` and is not frozen.
+- the PR is for **your assigned unit** in this sprint,
+- **all checks are green**,
+- your unit''s reviewer declared **review-clean** (every Major/Medium
+  finding fixed),
+- the sprint doc says `status: ACTIVE` and is not frozen.
 
-Everything outside those four conditions — other PRs, other repos, a red or
-pending check, an unreviewed diff, a closed or frozen sprint — is the default
-FnB gate, unchanged.
-Do **not** generalize this authority; it exists because the planner declared
-it and dies when the sprint closes. When in doubt, check the doc; if it says
-`CLOSED` or is frozen, you have no merge authority.
+Everything outside those four — other PRs, other repos, a red or pending
+check, an unreviewed diff, a closed or frozen sprint — is the default FnB
+gate, unchanged. The authority dies when the sprint closes; in doubt ->
+read the doc; `CLOSED` or frozen -> no merge authority.
 
-## The loop
+## The loop (dev slot)
 
-One discipline spans every step: **check your inbox (`sc mem message check`)
-at the start of each step and on every tracker wake.** The planner steers the
-sprint by message — holds, re-sequencing, scope changes land there before the
-board catches up — so a message is authoritative for your slot. Never start a
-step on a stale slot.
+At the start of every step and on every tracker wake: `sc mem message
+check`. A planner message (hold, re-sequence, scope change) is
+authoritative over the board — never start a step on a stale slot.
 
-**1. Know your slot — and write it down.** Read the sprint doc; find your
-row. Note what you depend on (upstream unit + its shell), who reviews you,
-and what depends on you (downstream shell — that''s who you hand off to). No
-upstream → you start immediately. Embed one line in your `current_state` —
-your slot at a glance, kept current as your status walks, dropped at
+**1. Know your slot.** Read the sprint doc, find your row; note upstream
+(unit + shell), your reviewer, and downstream (shell — your handoff
+target). No upstream -> start immediately. Embed one line in
+`current_state`, keep it current as your status walks, drop it at
 stand-down:
 
 ```
 SPRINT doc=<id> unit=<seq> upstream=<seq|none> downstream=<shortname|none> status=<...>
 ```
 
-**2. Stand up your sprint tracker — one, for the whole sprint.** A sprint is
-mostly waiting for someone else''s PR to go green and merge, and you won''t be
-sitting in a live session when it does. The tracker is what wakes a cold
-shell: a recurring watcher in your harness''s scheduler (cron / scheduled
-wakeup) that polls the sprint''s PRs and **notifies you on every transition —
-any sprint PR going green, going red, or merging**. Every participant runs
-one; so does the planner. Rules that make it not hurt:
+**2. Stand up your sprint tracker — exactly one, spanning the sprint.** A
+recurring watcher in your harness scheduler (cron / scheduled wakeup) that
+polls the sprint''s PRs and notifies you on every transition — any sprint
+PR going green, going red, or merging. It is what wakes a cold shell.
+Rules:
 
-- **Exactly one tracker per shell, spanning the sprint.** Derive the watch
-  list live each poll — `gh pr list` filtered to the branches in the sprint
-  doc — so PRs that open mid-sprint join automatically. If you''re tempted to
-  add a second trigger or edit the first mid-sprint, the tracker''s query was
-  wrong; fix it, don''t multiply it.
-- **Waking is not knowing.** A notification tells you *something* moved;
-  re-orient before acting — read the sprint doc, find your row, check your
-  inbox. The doc says whether it''s your turn; the tracker only says "look".
-- **The tracker dies with the sprint** (step 9). A sprint tracker still
-  firing in a later session is a defect you created.
-- No scheduler in your harness → fall back to in-session polling
+- Derive the watch list live each poll — `gh pr list` filtered to the
+  branches in the sprint doc — so mid-sprint PRs join automatically.
+  Tempted to add a second trigger or edit the first mid-sprint -> the
+  query was wrong; fix it, don''t multiply it.
+- Waking is not knowing. On wake, before acting: read the sprint doc, find
+  your row, check your inbox. The doc says whether it''s your turn; the
+  tracker only says "look".
+- The tracker dies at step 9. A sprint tracker firing in a later session =
+  a defect you created.
+- No scheduler in your harness -> poll in-session between work units
   (`gh pr view <upstream-pr> --json state,mergedAt` · `git fetch origin
-  main`) between work units, and say so to the planner at kickoff.
+  main`) and say so to the planner at kickoff.
 
-**3. Prepare.** Run the `git` skill''s sync gate, cut your feature branch from
-your base. If your unit needs upstream code that hasn''t merged yet, branch
-stacked on the upstream shell''s branch — and accept the retarget duty in
-step 5. If you can build against current `main`, do that instead; stacks are
-for real code dependencies, not moral support.
+**3. Prepare.** Run the `git` skill''s sync gate; cut your feature branch
+from your base. Your unit needs upstream code that hasn''t merged -> branch
+stacked on the upstream shell''s branch + accept the retarget duty in
+step 5. Buildable against current `main` -> branch from `main`; stack only
+for real code dependencies.
 
-**4. Watch for your dependency to land.** Signals, in order of trust:
+**4. Watch for your dependency to land.** Signals, in trust order:
 
-- **Your tracker** — the merge notification for your upstream unit *is* your
-  turn signal, cold session or live.
-- **Inbox** — the upstream dev messages you on merge (that''s *its* step 8).
-  `sc mem message check` between work units and on every tracker wake.
-- **Manual poll** — backup when live and impatient; never a reason to skip
-  the tracker.
+- **Tracker** — the merge notification for your upstream unit = your turn
+  signal, cold session or live.
+- **Inbox** — the upstream dev messages you on merge (its step 8).
+  `sc mem message check` between work units and on every wake.
+- **Manual poll** — backup while live; never a reason to skip the tracker.
 
-While waiting you can build and commit locally; you just can''t open your PR
-out of turn. If the upstream unit visibly stalls (red CI for hours, scope
-ballooning), message the planner — don''t sit silent behind a stuck link.
+While waiting: build and commit locally, but do NOT open your PR out of
+turn. Upstream visibly stalls (red CI for hours, scope ballooning) ->
+message the planner; don''t sit silent behind a stuck link.
 
-**5. Take your turn.** The moment your dependency merges:
+**5. Take your turn** the moment your dependency merges:
 
-- stacked on the upstream branch → **retarget first**: `gh pr edit <your-pr>
-  --base main` if the PR exists, otherwise just note your base is gone —
-  same discipline as the `git` skill''s stacked-merge procedure;
+- stacked on the upstream branch -> retarget first: `gh pr edit <your-pr>
+  --base main` if the PR exists, otherwise note your base is gone — same
+  discipline as the `git` skill''s stacked-merge procedure;
 - `git fetch origin && git rebase origin/main` on your feature branch;
-- push, open your PR, and message the planner that you''re `pr-open`.
+- push, open your PR, message the planner `pr-open`.
 
-**6. Babysit CI.** `gh pr checks <your-pr> --watch` while live; your tracker
-covers the cold gaps — a red on your PR is a wake-up call, not news you hear
-from the planner.
+**6. Babysit CI.** `gh pr checks <your-pr> --watch` while live; the
+tracker covers cold gaps — a red on your PR is your wake-up, not news from
+the planner.
 
-**Not every red is your bug — triage before you fix.** Ask: is the failure
-in something your diff touches? Does `main` show the same failure? Does the
-log say timeout, runner died, network, a flaky test you never went near?
-Anomalous → **re-run the failed checks** (`gh run rerun <run-id> --failed`),
-don''t patch healthy code. An anomalous red that survives two reruns is a
-board problem — message the planner (flaky suite, broken `main`, infra) and
-hold; it''s the planner''s to fix as a unit, not yours to absorb. When a fix
-needs a fix, suspect the diagnosis.
+Triage before fixing: is the failure in something your diff touches? Does
+`main` show the same failure? Does the log say timeout / runner died /
+network / flaky test you never touched? Anomalous -> `gh run rerun
+<run-id> --failed`, don''t patch healthy code. Anomalous red survives two
+reruns -> message the planner (flaky suite, broken `main`, infra) and
+hold — planner''s to fix as a unit, not yours to absorb. When a fix needs a
+fix, suspect the diagnosis.
 
-A real red → read the failure, fix, push, watch again. This is your loop to
-run, not the planner''s to chase. **Three honest fix attempts without green →
-message the planner** with what''s failing and what you''ve tried; a wedged
-link is a board problem, not a private shame. (Reruns of flakes don''t count
-as attempts — but neither do they count as green: **merge authority still
-requires actual green checks.** "It''s just a flake" is never a merge.)
+Real red -> read the failure, fix, push, watch again — your loop to run,
+not the planner''s to chase. Three honest fix attempts without green ->
+message the planner with what''s failing and what you''ve tried. Reruns of
+flakes count neither as attempts nor as green: merge authority requires
+actual green checks — "it''s just a flake" is never a merge.
 
-**7. Pass sprint review.** CI green → message your unit''s reviewer that the
-PR is ready (`sprint <doc-id>: unit <seq> ready for review — PR #<n>,
-checks green`) and tell the planner you''re `in-review`. The reviewer answers
-with findings, **Major/Medium only as blockers** — fix those, push,
-re-request; CI re-runs on your push, so keep it green while you go. Low
-findings arrive as notes, not gates — they land in the sprint report, not in
-your critical path. Disagree with a severity call → planner rules; don''t
-litigate in the thread while the chain waits.
+**7. Pass sprint review.** CI green -> message your unit''s reviewer
+`sprint <doc-id>: unit <seq> ready for review — PR #<n>, checks green` +
+tell the planner `in-review`. Major/Medium findings block: fix, push,
+re-request; keep CI green across fix pushes. Low findings = notes for the
+sprint report, not gates. Disagree with a severity call -> planner rules;
+don''t litigate in the thread while the chain waits.
 
-**8. Merge on green + clean, then hand off.** All checks green, reviewer
-declared review-clean, boundary above satisfied:
+**8. Merge on green + clean, then hand off.** All checks green + reviewer
+declared review-clean + boundary above satisfied:
 
 ```
 gh pr merge <your-pr> --squash --delete-branch
@@ -3633,54 +3366,50 @@ sc mem message send <downstream-shortname> "sprint <doc-id>: unit <seq> merged �
 sc mem message send <planner-shortname> "sprint <doc-id>: unit <seq> merged (PR #<n>)."
 ```
 
-No downstream (you''re the last link) → the planner message is the handoff.
-Then clean up local per the `git` skill (re-pin base, delete the branch).
+No downstream (last link) -> the planner message is the handoff. Then
+clean up local per the `git` skill (re-pin base, delete the branch).
 
-**9. Stand down.** The planner''s close-out message (or a frozen/`CLOSED`
-sprint doc) ends the sprint: merge authority is gone, default gates resume,
-and — **before anything else — kill your tracker, drop the SPRINT line from
-your `current_state`,** and confirm both in your reply to the planner.
+**9. Stand down.** Planner close-out message / frozen or `CLOSED` sprint
+doc = sprint over: merge authority gone, default gates resume. Before
+anything else: kill your tracker + drop the SPRINT line from
+`current_state`, and confirm both in your reply to the planner.
 
-## Your slot as reviewer
+## Reviewer slot
 
-A reviewer slot gates the units the doc''s `reviewer` column assigns you. The
-base `review` skill is your method — adversarial, verify-don''t-trust, review
-against the unit''s scope; this overlay changes only pace and severity:
+Gate the units the doc''s `reviewer` column assigns you. Method = the base
+`review` skill (adversarial, verify-don''t-trust, review against the unit''s
+scope); this overlay changes only pace and severity:
 
 1. **Same tracker, same ledger.** Stand up your one sprint tracker at
-   kickoff and a `SPRINT doc=<id> reviewing=<seq,seq,…>` line in
-   `current_state`. Your wake signal is a `ready for review` message or an
-   assigned unit''s PR going green — a review request is next-in-queue work,
-   not eventually-work; a waiting review is a stalled chain, exactly like
-   red CI.
-2. **Major/Medium block; Low informs.** A sprint runs on velocity with a
-   quality gate, not a full-polish gate. Findings that are wrong-behavior,
-   data-loss, security, spec-violation (Major) or will-bite-soon (Medium) →
-   the dev fixes them now, and you re-review on the fix push. Style, naming,
-   nice-to-have refactors (Low) → one summary note to the planner for the
-   sprint report; they don''t block merge and you don''t re-litigate them.
-3. **Handoffs go direct — a scoped relaxation, same shape as the merge
-   authority.** The base `review` skill gates handoffs behind the FnB.
-   Inside an ACTIVE sprint, for your assigned units only, you message the
-   author dev your findings directly and copy the planner one line
+   kickoff + a `SPRINT doc=<id> reviewing=<seq,seq,…>` line in
+   `current_state`. Wake signal = a `ready for review` message or an
+   assigned unit''s PR going green. A review request is next-in-queue work;
+   a waiting review stalls the chain exactly like red CI.
+2. **Major/Medium block; Low informs.** Wrong-behavior / data-loss /
+   security / spec-violation (Major) or will-bite-soon (Medium) -> the dev
+   fixes now; re-review on the fix push. Style / naming / nice-to-have
+   refactors (Low) -> one summary note to the planner for the sprint
+   report; Low never blocks merge and you don''t re-litigate it.
+3. **Handoffs go direct** — scoped relaxation, same shape as the merge
+   authority. The base `review` skill gates handoffs behind the FnB;
+   inside an ACTIVE sprint, for your assigned units only: message the
+   author dev your findings directly + copy the planner one line
    (`unit <seq>: N major, M medium — with <dev>` or `unit <seq>:
-   review-clean`). The FnB gate is unchanged for everything else, and it
-   returns the moment the doc freezes.
-4. **Clean is a declaration.** `review-clean` to the dev + planner is what
-   unlocks the dev''s merge — say it explicitly, never leave it implied.
-5. **Stand down like everyone else.** Close-out message → kill your tracker,
-   drop your SPRINT line, confirm to the planner.
+   review-clean`). The FnB gate is unchanged everywhere else and returns
+   the moment the doc freezes.
+4. **Clean is a declaration.** Say `review-clean` explicitly to dev +
+   planner — it is what unlocks the dev''s merge; never leave it implied.
+5. **Stand down** on close-out: kill your tracker, drop your SPRINT line,
+   confirm to the planner.
 
 ## Stance
 
-- **The tracker watches, you decide.** One watcher per shell for the whole
-  sprint; notifications wake you, the sprint doc tells you what it means.
-- **Report state changes, not progress prose.** The planner needs
-  `building → pr-open → in-review → fixing → merged` transitions, one line
-  each.
-- **The boundary is load-bearing.** Merge-on-green+clean and direct review
-  handoffs are scoped authority inside a declared sprint, never a precedent
-  outside one.',
+- One tracker per shell for the whole sprint; notifications wake you, the
+  sprint doc tells you what it means.
+- Report state transitions (`building → pr-open → in-review → fixing →
+  merged`), one line each — not progress prose.
+- Merge-on-green+clean and direct review handoffs are scoped authority
+  inside a declared sprint, never precedent outside one.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -3696,29 +3425,27 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# sprint_orchestration — governing a coordinated multi-shell push
 
-The FnB declares *that* a sprint happens; you make it run. The loop is
-planner → devs → reviewers → devs → planner: you decompose the push into
-units, sequence who builds on whom, assign a reviewer to every unit, kick
-off every participant, watch the whole board, unblock stalls, and close it
-out with a report. The participant loop (build → PR → CI → sprint review →
-merge on green+clean → hand off, plus the reviewer slot) is the `sprint`
-skill — devs and reviewers run it; you run this.
+The FnB declares *that* a sprint happens; you make it run: decompose the
+push into units, sequence who builds on whom, assign a reviewer to every
+unit, kick off every participant, watch the whole board, unblock stalls,
+close out with a report. The participant loop (build → PR → CI → sprint
+review → merge on green+clean → hand off, plus the reviewer slot) = the
+`sprint` skill — devs and reviewers run it; you run this.
 
-The skills meet at one artifact: the **sprint doc**. Your declaration turns
-the participants'' scoped authority on (dev merge-on-green+clean, reviewer
-direct handoffs); your close-out turns it off.
+The skills meet at one artifact, the **sprint doc**: your declaration
+turns the participants'' scoped authority ON (dev merge-on-green+clean,
+reviewer direct handoffs); your close-out turns it OFF.
 
 ## Step 1: Declare the sprint
 
-Decompose the push into units a single shell can own end-to-end. Map the
-dependency order — and be stingy with it: **a dependency edge is a real code
-dependency, not a preference.** Units that don''t touch each other run in
-parallel; a chain is only as fast as its slowest link, so keep chains short
-and the graph wide where the code allows.
+Decompose the push into units a single shell can own end-to-end. Map
+dependency order stingily: a dependency edge = a real code dependency, not
+a preference. Units that don''t touch each other run in parallel; keep
+chains short and the graph wide where the code allows.
 
-Assign each unit a dev shell **and a reviewer shell** (one reviewer can gate
-several units — just don''t let one reviewer become the whole sprint''s
-bottleneck), then write the board as a `documents` row:
+Assign each unit a dev shell + a reviewer shell (one reviewer may gate
+several units — don''t let one reviewer become the whole sprint''s
+bottleneck). Write the board as a `documents` row:
 
 ```
 sc mem doc add "SPRINT: <title>" --kind doc --body-file <draft.md>
@@ -3734,20 +3461,21 @@ declared: <date> · planner: <shortname>
 | seq | unit | shell | reviewer | depends on | branch | pr | status |
 ```
 
-Unit `status` walks: `waiting → building → pr-open → in-review → fixing →
-merged` (`fixing` loops back to `in-review` until clean; `ci-red` can
-interleave anywhere from `pr-open` on). Note the returned `document_id` —
-every kickoff and report references it — and embed `SPRINT doc=<id>
-governing` in your own `current_state`; drop it at close-out.
+Unit `status` walks `waiting → building → pr-open → in-review → fixing →
+merged`; `fixing` loops back to `in-review` until clean; `ci-red` can
+interleave anywhere from `pr-open` on.
 
-**You are the doc''s only writer.** Devs report transitions by message; you
-fold them into the board with `sc mem doc edit <id> --body-file`. One writer,
-one board, no drift.
+Note the returned `document_id` — every kickoff and report references
+it — and embed `SPRINT doc=<id> governing` in your own `current_state`;
+drop it at close-out.
+
+You are the doc''s only writer: devs report transitions by message; fold
+them into the board with `sc mem doc edit <id> --body-file`.
 
 ## Step 2: Kick off
 
-Message every participant its slot — the doc id, the instruction to load the
-`sprint` skill, and what its slot is:
+Message every participant its slot — the doc id, the instruction to load
+the `sprint` skill, and the slot:
 
 ```
 # devs — unit, dependencies, reviewer:
@@ -3757,23 +3485,22 @@ sc mem message send <dev> "SPRINT <doc-id>: you own unit <seq> — <one line>. D
 sc mem message send <reviewer> "SPRINT <doc-id>: you review units <seq,seq> — Major/Medium block, Low goes to the report. Load the sprint skill (reviewer slot). Review requests come to you directly as units go green."
 ```
 
-First-in-chain starts immediately; everyone else starts watching. From this
-message on, each dev holds the scoped merge authority and each reviewer the
+First-in-chain starts immediately; everyone else starts watching. This
+message activates each dev''s scoped merge authority and each reviewer''s
 direct-handoff authority for its assigned units.
 
-Then **stand up your own sprint tracker** — the same pattern the `sprint`
-skill gives the devs, and the answer to "how does a cold shell know it''s
-time": one recurring watcher per shell in the harness scheduler, polling the
-sprint''s PRs (watch list derived live from the doc''s branches, so mid-sprint
-PRs join without edits) and notifying on **every green, red, and merge**.
-Every participant runs exactly one for the sprint''s duration; nobody
-hand-builds ad-hoc triggers mid-sprint — if a tracker misses something, fix
-its query, don''t add a second. All trackers die at close-out (Step 5).
+Then stand up your own sprint tracker — the same pattern the `sprint`
+skill gives the devs: one recurring watcher per shell in the harness
+scheduler, polling the sprint''s PRs (watch list derived live from the
+doc''s branches, so mid-sprint PRs join without edits), notifying on every
+green, red, and merge. Exactly one per shell for the sprint''s duration —
+a tracker misses something -> fix its query, don''t add a second. All
+trackers die at close-out (Step 5).
 
 ## Step 3: Monitor the board
 
-Your tracker wakes you on every transition; between wakes, poll — don''t wait
-for reports:
+Your tracker wakes you on every transition; between wakes, poll — don''t
+wait for reports:
 
 ```
 gh pr list --state all             # who''s open, merged, closed
@@ -3782,95 +3509,90 @@ sc mem message check               # dev transition reports
 git fetch origin main              # what actually landed
 ```
 
-At any moment you should be able to answer: **which link is the bottleneck?**
-Fold every state change into the doc as it happens — the board is what the
-FnB and any rebooted shell reads to re-orient mid-sprint. On a tracker wake,
-that''s the whole job: read the event, update the board, nudge whoever it
-unblocks if their own tracker hasn''t already.
+At any moment, be able to answer: which link is the bottleneck? Fold every
+state change into the doc as it happens — the board is what the FnB and
+any rebooted shell reads to re-orient mid-sprint. On a tracker wake: read
+the event, update the board, nudge whoever it unblocks if their own
+tracker hasn''t already.
 
-**Messages are your steering wheel.** The `sprint` skill has every dev check
-its inbox at the start of each step and on every tracker wake — so a message
-from you is guaranteed to be read before that dev''s next move. Steer with it:
-holds, re-sequencing, nudges, rulings on reported reds. The board records
-state; messages change behavior. When they''d conflict, your latest message
-wins — then update the board to match.
+Messages are your steering wheel: the `sprint` skill has every dev check
+its inbox at each step start and every tracker wake, so your message is
+read before that dev''s next move. Steer with messages — holds,
+re-sequencing, nudges, rulings on reported reds. The board records state;
+messages change behavior; on conflict your latest message wins -> then
+update the board to match.
 
 ## Step 4: Unblock
 
-Stalls you''ll meet, and the moves:
+Stalls and the moves:
 
-- **A dev wedged on red CI** (it reports after three failed fix attempts, per
-  the `sprint` skill): decide — pair another shell onto it, re-scope the
-  unit, or pull the failing part into a follow-up unit so the chain moves.
-- **An anomalous red** — the dev reports a failure that isn''t its bug (flaky
-  test, runner death, `main` red underneath): the dev''s job was to rerun and
-  report, not to patch healthy code. Yours is to fix the cause as its own
-  unit (or hold the chain while infra recovers) and rule by message when the
-  dev may proceed. Don''t count phantom reds against a dev''s fix attempts —
-  and don''t let anyone merge over one either; green means green.
-- **A unit growing past its scope**: split it; the piece downstream actually
-  needs ships first, the rest becomes a new unit at the chain''s tail.
-- **A merge broke `main`**: message all devs to hold merges, insert a fix
+- **Dev wedged on red CI** (it reports after three failed fix attempts,
+  per the `sprint` skill): pair another shell onto it / re-scope the
+  unit / pull the failing part into a follow-up unit so the chain moves.
+- **Anomalous red** (flaky test, runner death, `main` red underneath — the
+  dev''s job was to rerun and report, not patch healthy code): fix the
+  cause as its own unit, or hold the chain while infra recovers; rule by
+  message when the dev may proceed. Don''t count phantom reds against the
+  dev''s fix attempts — and don''t let anyone merge over one; green means
+  green.
+- **Unit growing past scope**: split it — the piece downstream needs ships
+  first; the rest becomes a new unit at the chain''s tail.
+- **Merge broke `main`**: message all devs to hold merges, insert a fix
   unit at the front of the chain, resume when green.
-- **A review stall** — a unit sitting `in-review` while its reviewer works
-  something else: nudge the reviewer; still stuck → reassign the unit to
-  another reviewer. A severity dispute (dev says Low, reviewer says Medium)
-  → **you rule, by message, immediately** — a chain waiting on a
-  classification argument is pure loss. When the dispute is genuinely about
-  what the unit *should do*, that''s a judgment call: FnB.
-- **A link gone quiet** — no transition report, no tracker-visible movement,
-  no reply: nudge by message; a live shell reads it at its next step
-  boundary, a dead one never will. A second nudge met with silence →
-  **escalate to the FnB: only the FnB boots shells.** Ask for the shell to
-  be booted or the unit reassigned. A dead link is invisible unless you''re
-  counting heartbeats — the bottleneck question in Step 3 is what surfaces
-  it.
-- **Re-sequencing**: when the plan meets reality, edit the board and message
-  *every* affected dev with its new slot — a dev acting on a stale slot is
-  worse than a paused one.
-- **Judgment calls** — scope vs. deadline, cut a unit, change an interface
-  another team reads: **escalate to the FnB immediately.** Sitting on a
-  judgment call is the one stall you can''t unblock yourself.
+- **Review stall** (unit sitting `in-review` while its reviewer works
+  something else): nudge the reviewer; still stuck -> reassign the unit to
+  another reviewer. Severity dispute (dev says Low, reviewer says Medium)
+  -> rule by message immediately — a chain waiting on a classification
+  argument is pure loss. Dispute about what the unit *should do* -> FnB.
+- **Link gone quiet** (no transition report, no tracker-visible movement,
+  no reply): nudge by message — a live shell reads it at its next step
+  boundary, a dead one never will. Second nudge met with silence ->
+  escalate to the FnB: only the FnB boots shells; ask for a boot or a
+  reassignment. The bottleneck question in Step 3 is what surfaces a dead
+  link.
+- **Re-sequencing**: edit the board + message *every* affected dev its new
+  slot — a dev acting on a stale slot is worse than a paused one.
+- **Judgment calls** (scope vs. deadline, cutting a unit, changing an
+  interface another team reads): escalate to the FnB immediately — the one
+  stall you can''t unblock yourself.
 
 ## Step 5: Close out
 
 When every unit is `merged` and `main` is green:
 
-1. Set `status: CLOSED` in the body, then freeze the board:
-   `sc mem doc freeze <doc-id>`. **Freezing is the revocation** — a frozen or
-   `CLOSED` sprint doc is the signal that every participant''s scoped merge
-   authority is gone (the `sprint` skill checks exactly this).
-2. Message every participant that the sprint is closed, default merge gates
-   resume, and **kill your sprint tracker now — reply when it''s dead.**
-3. **Tear down the watchers.** Kill your own tracker, then collect the devs''
-   confirmations. The sprint is not closed while any tracker lives — a
-   watcher leaking into later sessions fires on unrelated PRs and erodes
-   trust in the next sprint''s signals. Chase silence like you''d chase red CI.
-4. **Write the sprint report** — one `documents` row, the sprint''s durable
-   record:
+1. Set `status: CLOSED` in the body, then freeze:
+   `sc mem doc freeze <doc-id>`. Freezing IS the revocation — a frozen or
+   `CLOSED` sprint doc is exactly what the `sprint` skill checks before
+   any merge; every participant''s scoped authority ends with it.
+2. Message every participant: sprint closed, default merge gates resume,
+   kill your sprint tracker now — reply when it''s dead.
+3. Tear down the watchers: kill your own tracker, then collect every dev''s
+   confirmation. The sprint is not closed while any tracker lives — a
+   leaked watcher fires on unrelated PRs in later sessions. Chase silence
+   like you''d chase red CI.
+4. Write the sprint report — one `documents` row, the durable record:
 
    ```
    sc mem doc add "SPRINT REPORT: <title>" --kind doc --body-file <report.md>
    ```
 
-   Cover: units shipped (PRs, planned vs. actual order), review outcomes
-   (Major/Medium found and fixed per unit; the Low notes reviewers filed —
-   this is where they land, as the post-sprint cleanup list), stalls hit and
-   how each was unblocked, anything cut or re-scoped and why, and what the
-   sprint surfaced about the process itself. Message the FnB: sprint closed,
+   Cover: units shipped (PRs, planned vs. actual order); review outcomes
+   (Major/Medium found and fixed per unit; reviewers'' Low notes — they
+   land here, as the post-sprint cleanup list); stalls hit and how each
+   was unblocked; anything cut or re-scoped and why; what the sprint
+   surfaced about the process itself. Message the FnB: sprint closed,
    report at doc `<id>`.
 5. Settle the bookkeeping — close the sprint''s flags, advance roadmap /
    feature status, note docs-pending.
 
 ## Stance
 
-- **Enforcement is advisory in v1.** Merge order and authority live in skill
-  text and the board, not in a pre-commit check. That makes the board''s
-  accuracy *your* discipline — an out-of-date board is a false authority
-  grant.
-- **Monitor > interrogate.** `gh` and `git fetch` tell you the truth without
-  costing a dev a context switch; messages are for what the tools can''t see.
-- **Escalate judgment, absorb mechanics.** Re-sequencing is yours; changing
+- Enforcement is advisory in v1 — merge order and authority live in skill
+  text and the board, not a pre-commit check. An out-of-date board = a
+  false authority grant; board accuracy is your discipline.
+- Monitor > interrogate: `gh` and `git fetch` cost no dev a context
+  switch; messages are for what the tools can''t see.
+- Escalate judgment, absorb mechanics: re-sequencing is yours; changing
   what the sprint *means* is the FnB''s.',
   0
 )
@@ -3887,16 +3609,14 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   1,
   '# surface_catalogue — read the repo from the map, not by grepping
 
-super-coder lives inside a host repo. The **dr_\*** tables are a scan of that
-repo — query them first to orient, instead of walking the tree blind. They live
-in the **map db**, `.sc-state/map.db` — a *separate* file from your memory db
-(`.super-coder/shell_db.db`). Query that file: `sc map-sql "…"`.
+super-coder lives inside a host repo. The `dr_*` tables = a scan of that repo
+— query them first to orient, not the tree. They live in the **map db**,
+`.sc-state/map.db` — a separate file from your memory db
+(`.super-coder/shell_db.db`). Query it via `sc map-sql "…"`.
 
-You do **not** map the repo. The map is kept fresh for you automatically (git
-hooks re-map on pull / branch-switch / rebase) and is owned by the
-**cartographer** shell, which configures and heals it. Your job is to *read* it.
-If it ever looks empty, stale, or wrong, that''s a cartographer task — flag it,
-don''t map it yourself.
+NEVER map the repo yourself. The map stays fresh automatically (git hooks
+re-map on pull / branch-switch / rebase) and is owned by the **cartographer**
+shell. Empty / stale / wrong map -> flag the cartographer, don''t re-map.
 
 | Table | Holds |
 |---|---|
@@ -3909,18 +3629,18 @@ don''t map it yourself.
 | `dr_db_table` / `dr_db_column` | the app DB schema: tables/views + their columns (`type`, `pk`, `not_null`) |
 | `dr_route` / `dr_component` | UI routes (`path`, `kind`) + components (`name`, `path`) |
 
-The first five are mapped on **every** repo. The last three are the **semantic
-layer** — populated only when the cartographer has wired an extractor for this
-repo''s stack (see the `cartographer` skill). An empty `dr_endpoint` means *no
-extractor wired*, not "no endpoints" — check before relying on it, and flag the
-cartographer if a dimension you need is missing.
+First five = mapped on EVERY repo. Last three = the semantic layer, populated
+only when the cartographer wired an extractor for this repo''s stack (see the
+`cartographer` skill). Empty `dr_endpoint` = no extractor wired, NOT "no
+endpoints" — check before relying on it; flag the cartographer if a dimension
+you need is missing.
 
 ## Orient fast
 
-The boot `## CONNECTIONS` block already shows the **section index** (where to
-start). The flow is: pick a section there → query *that section''s leaves* (file
-names + descriptions) → read the one or two files you need. Section-first, one
-cheap query deep — never a full preload.
+Boot `## CONNECTIONS` already shows the section index. Flow: pick a section
+there -> query that section''s leaves (file names + descriptions) -> read the
+one or two files you need. Section-first, one cheap query deep — never a full
+preload.
 
 ```sql
 -- all of these run against the map db:  sc map-sql "<query>"
@@ -3961,19 +3681,18 @@ SELECT path, kind, file FROM dr_route ORDER BY path;                    -- UI ro
 
 ## Stance
 
-- **Map first, grep second.** Query `dr_filepath` to find the handful of files
-  that matter, then read those — don''t `grep -r` the whole tree.
-- **Lazy-load.** The catalogue is the index; pull a file''s contents only once
-  the map points you at it. Carry the map, not the territory.
-- **Map looks wrong?** Empty, stale (repo changed since `mapped_at`), or
-  mis-classified — that''s the cartographer''s to fix. Raise it; don''t re-map.
-  A file under "other / unsectioned", or a `desc IS NULL` where you needed one,
-  is also a cartographer worklist item — flag it, don''t author the map yourself.
-- Always maps files / deps / env + the navigation layer (sections + per-file
-  descriptions). The semantic layer (endpoints / DB schema / UI routes) is there
-  when the cartographer wired an extractor for this stack — query it to jump
-  straight to the API surface or schema; fall back to section + descriptions when
-  a dimension is empty. Symbol-level semantics (functions/classes) are a later pass.',
+- **Map first, grep second.** Query `dr_filepath` for the handful of files
+  that matter, then read those — NEVER `grep -r` the whole tree.
+- **Lazy-load.** Pull a file''s contents only once the map points at it. Carry
+  the map, not the territory.
+- **Map looks wrong?** Empty, stale (repo changed since `mapped_at`),
+  mis-classified, a file under "other / unsectioned", or a `desc IS NULL`
+  where you needed one -> cartographer worklist item. Flag it; don''t author
+  the map yourself.
+- **Semantic layer when wired.** Endpoints / DB schema / UI routes let you
+  jump straight to the API surface or schema; a dimension is empty -> fall
+  back to section + descriptions. Symbol-level semantics (functions/classes)
+  are a later pass.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -3989,48 +3708,45 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# tailscale — driving the tailnet
 
-How a sandboxed shell operates remote hosts over Tailscale: read tailnet status,
-run commands on a tailnet host. This is **opt-in and link-only** — the operator
-brings a host that is already `tailscale up`; you drive a scoped loop against the
-tailnet. Grant is explicit, per-fork (`common=0`); it is the **devops** flavor''s
-signature skill. You have it because someone granted it to your shell.
+Operate remote hosts over Tailscale from a sandboxed shell: read tailnet
+status, run commands on tailnet hosts. Opt-in + link-only — the operator
+brings a host that is already `tailscale up`; you drive a scoped loop against
+it. Grant is explicit, per-fork (`common=0`); the **devops** flavor''s
+signature skill.
 
-## You drive the tailnet through the host broker — not tailscale directly
+## Drive through the host broker — never `tailscale` directly
 
-You run inside the sandbox container. The container can''t join the tailnet (no
-route, no TUN, no `NET_ADMIN`) and **must not** hold a tailnet credential. So you
-do **not** run `tailscale` — you call the **host-side ts-broker** over a unix
-socket in the bind-mounted repo. The broker owns the host''s `tailscale up` node
-and does the work; the tailnet identity never enters the fork. (See
-`.super-coder/docs/tailscale-broker.md`. It is the sibling of the Windows VM broker —
-`windows_devkit` works the exact same way.)
-
-The socket path comes from `sc ts-broker-sock`. Every verb is a `curl`:
+The sandbox can''t join the tailnet (no route, no TUN, no `NET_ADMIN`) and
+must not hold a tailnet credential. NEVER run `tailscale` or bring up
+`tailscaled` — call the host-side **ts-broker** over its unix socket in the
+bind-mounted repo; the broker owns the host''s `tailscale up` node, and the
+tailnet identity never enters the fork. (Detail:
+`.super-coder/docs/tailscale-broker.md` — sibling of the Windows VM broker;
+`windows_devkit` works the same way.)
 
 ```bash
 SOCK="$(sc ts-broker-sock)"
 curl -s --unix-socket "$SOCK" http://ts/health      # liveness check first
 ```
 
-If the curl fails with "not reachable", the broker isn''t running — ask the
-operator to start it on the host: `sc ts-broker-up`. You cannot start it
-yourself (it runs on the host, not in your sandbox).
+curl fails "not reachable" → broker down → ask the operator to run
+`sc ts-broker-up` on the host. You cannot start it yourself (host process,
+not sandbox).
 
 ## Precondition — the link is configured
 
-The tailnet lives in `.super-coder/instance.json` under the `ts` key. It carries
-**no secret material** — the host node''s identity is the credential and it stays
-host-side:
+Tailnet config = `ts` key in `.super-coder/instance.json`. Carries no secret
+material — the host node''s identity is the credential and it stays host-side:
 
 ```json
 "ts": { "ssh_user": "tester", "allowed_hosts": ["build-box","deploy-target"],
         "tailscale_bin": "tailscale" }
 ```
 
-No `ts` block → no tailnet linked: stop and ask the operator to set it (hand-edit,
-or `PUT /api/ts`). `allowed_hosts` is a **fail-closed allow-list** — you may only
-`exec` against hosts listed there; an empty/absent list denies all. Declare the
-hosts the fork needs; a wider list is a wider blast radius.
+No `ts` block → no tailnet linked: stop + ask the operator to set it
+(hand-edit or `PUT /api/ts`). `allowed_hosts` = fail-closed allow-list:
+`exec` only reaches hosts listed there; empty/absent list denies all. Declare
+only the hosts the fork operates — widen deliberately, never by default.
 
 ## The verbs
 
@@ -4039,33 +3755,27 @@ hosts the fork needs; a wider list is a wider blast radius.
 | **status** | `curl -s --unix-socket "$SOCK" http://ts/status` → `{backend, self, peers[]}` from the host node''s view |
 | **exec** | `curl -s --unix-socket "$SOCK" http://ts/exec -d ''{"host":"build-box","command":"uptime"}''` → `{ok, exit, stdout, stderr}` |
 
-The broker runs `tailscale ssh <ssh_user>@<host>` non-interactively (tailnet ACLs
-govern auth — no key, no prompt). You name a host + a command; you never hold a
-key, and the host must be in `allowed_hosts`.
+The broker runs `tailscale ssh <ssh_user>@<host>` non-interactively (tailnet
+ACLs govern auth — no key, no prompt). You name a host + a command; the host
+must be in `allowed_hosts`.
 
-`status` returns each peer''s hostname, MagicDNS name, Tailscale IP, and online
-state — use it to confirm a target is reachable before you `exec`.
+`status` before `exec`: peers carry hostname, MagicDNS name, Tailscale IP,
+and online state — confirm the target is online first; a timeout on a down
+host wastes a 2-minute exec window.
 
-## Mullvad ↔ Tailscale on Linux — the gotcha
+## Mullvad ↔ Tailscale on Linux
 
-Tailscale and the Mullvad app fight over the routing/firewall on Linux: both want
-the default route + nftables, and running them together drops tailnet traffic.
-They are **sequential-use** — bring one down before the other comes up. If
-`exec`/`status` suddenly fail on a host that worked, check whether Mullvad came up
-on the **host** (the broker''s node), not in your sandbox. This is a host-side
-network-state problem, not a broker bug; surface it to the operator.
+Tailscale and the Mullvad app fight over the default route + nftables on
+Linux; running both drops tailnet traffic. Sequential-use only: bring one
+down before the other comes up. `exec`/`status` suddenly fail on a host that
+worked → check whether Mullvad came up on the HOST (the broker''s node), not
+in your sandbox — host-side network state, not a broker bug; surface it to
+the operator.
 
-## Stance
+## Lanes
 
-- **Drive, don''t join.** You operate the tailnet through the broker; you never
-  bring up `tailscaled` or hold an auth key. Link-only stays link-only — node
-  provisioning (`tailscale up`) is the operator''s, host-side, once.
-- **Declare your hosts.** `allowed_hosts` is the blast radius. Keep it to what the
-  fork actually operates; widen it deliberately, not by default.
-- **Status before exec.** Confirm the peer is online before you run against it —
-  a timeout on a down host wastes a 2-minute exec window.
-- **Lanes.** Operating hosts/deploys/backups is yours (devops). App features are
-  dev''s; the super-coder engine is admin''s.',
+Operating hosts / deploys / backups = yours (devops). App features = dev''s;
+the super-coder engine = admin''s.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -4075,92 +3785,86 @@ ON CONFLICT(name) DO UPDATE SET
 
 INSERT INTO skills (name, description, category, command, common, content, is_deleted) VALUES (
   'test_authoring',
-  'Principles for stringent pytest tests — tests that can actually fail. Pair with a granted stack-infra testing skill (test_authoring_sqlite / test_authoring_pg / a fork-local one) if the shell has one.',
+  'Principles for stringent pytest tests — tests a realistic bug turns red. Pair with a granted stack-infra testing skill (test_authoring_sqlite / test_authoring_pg / a fork-local one) if the shell has one.',
   'craft',
   NULL,
   0,
   '# test_authoring — stringent pytest tests
 
-Use this when writing a new test, or reviewing a diff that touches `tests/`.
-The goal of a test is to **fail when the code is wrong**. A test that passes
-no matter what the code does is worse than no test — it reads as coverage while
-guarding nothing.
+Apply when writing a test or reviewing a diff that touches `tests/`.
+Pass condition for any test: a realistic bug turns it red. A test no bug
+can fail reads as coverage while guarding nothing — sharpen or cut it.
 
-If your shell has a stack-infra testing skill granted (`test_authoring_sqlite`,
-`test_authoring_pg`, or a fork-local skill that supersedes this one), load it
-alongside for the test infrastructure your stack uses (fixture setup, callers,
-DB access pattern). If none is granted, this skill stands alone — don''t hunt
-for one that this fork doesn''t ship.
+Stack infra (fixture setup, callers, DB access pattern) lives in the granted
+stack skill — `test_authoring_sqlite` / `test_authoring_pg` / a fork-local
+skill that supersedes this one. Load it alongside. None granted -> this skill
+stands alone; do NOT hunt for one the fork doesn''t ship.
 
-## The rules (the floor)
+## Rules (the floor)
 
-1. **Count + content + negative.** A count assertion (`written == 1`) must be
-   followed by a content assertion (the *right* row, with the right fields and
-   FKs) **and** a negative assertion (the row that must *not* exist). A bug that
-   writes the wrong body, wrong participant, or a stray contact must turn the
-   test red. `>= 1` is banned where an exact count is knowable.
+1. **Count + content + negative.** After a count assertion (`written == 1`),
+   assert the content (the right row: fields + FKs) + the negative (the row
+   that must NOT exist). Wrong body / wrong participant / stray contact must
+   turn the test red. `>= 1` is banned where the exact count is knowable.
 
-2. **No config-mirror tautologies.** Never assert that code output equals a
-   constant the code-under-test imports in-process
-   (`assert resp == list(THE_SAME_CONSTANT)`). It can only catch hardcoding, not
-   a wrong value. Instead: pin the literal expectation in the test, or derive it
-   from independent behavior (e.g. the error classes a real `classify_error()`
-   actually emits across sample failures).
+2. **No config-mirror tautologies.** NEVER assert output equals a constant
+   the code under test imports in-process
+   (`assert resp == list(THE_SAME_CONSTANT)`) — it catches hardcoding only,
+   never a wrong value. Pin the literal expectation in the test, or derive it
+   from independent behavior (e.g. the error classes a real
+   `classify_error()` emits across sample failures).
 
-3. **Round-trips assert the negative space too.** Insert `new`; assert `new` is
-   present **and** the prior value is gone **and** sibling fields are untouched.
+3. **Round-trips assert the negative space.** Insert `new` -> assert `new`
+   present + prior value gone + sibling fields untouched.
    `assert get() == put_value` alone passes against a stub that echoes input.
 
-4. **Every error / edge branch gets a test.** If the code has a failure path, a
-   reject path, a NULL path, or an empty-input path, each gets its own case.
-   Happy-path-only is the most common way a test is "written to pass."
-   `is not None` / truthiness is banned where the exact value is knowable.
+4. **Every error / edge branch gets its own case.** Failure path / reject
+   path / NULL path / empty-input path -> one test each. `is not None` /
+   bare truthiness banned where the exact value is knowable.
 
-5. **Negative tests assert the action did not happen, not just the message.**
-   For a denied / rejected / gated path, assert the underlying effect is absent
-   (no row written, resource still unreachable, no egress call) — not only that
-   a 4xx or a `permission_denied` string came back.
+5. **Negative tests assert the effect is absent.** Denied / rejected / gated
+   path -> assert the underlying action did not happen (no row written,
+   resource still unreachable, no egress call) — a 4xx or a
+   `permission_denied` string alone does not pass.
 
-6. **Schema changes are tested by behavior, not by `PRAGMA`.** To prove a column
-   is nullable, insert a NULL row and assert it''s accepted — don''t read the
-   catalog flag. The pragma can be right while a CHECK or trigger still rejects.
+6. **Schema changes: test behavior, not `PRAGMA`.** To prove a column
+   nullable, insert a NULL row -> assert accepted. The catalog flag can be
+   right while a CHECK or trigger still rejects.
 
-7. **Idempotency / migration tests run on a *dirty* fixture.** Seed the exact
-   state the migration is meant to clean (the rows it removes still present),
-   then run it once and twice, asserting convergence. Idempotency-on-clean is
-   nearly free to pass and proves almost nothing.
+7. **Idempotency / migration tests run on a dirty fixture.** Seed the exact
+   state the migration cleans (the rows it removes still present) -> run once
+   and twice -> assert convergence. Idempotency-on-clean proves almost
+   nothing.
 
-8. **Reject silent-empty.** A bad filter / typo''d enum value must 422, never a
-   200 reading as "nothing found." Assert the rejection explicitly.
+8. **Reject silent-empty.** Bad filter / typo''d enum value -> assert 422
+   explicitly, never a 200 reading as "nothing found."
 
-## Review lens (use when reviewing a tests/ diff)
+## Review lens (tests/ diff)
 
-- Read the assertions, not the test name. Does any realistic bug survive them?
-- For each `assert`: name a one-line code change that would still pass it. If
-  that change is a real bug, the assertion is too weak.
-- Count-only? Substring-only? `is not None`? — demand the exact value.
-- Does the test compare output to a constant the code imports? — flag rule 2.
-- Is only the success branch tested? — name the missing edge and require it.
+- Read the assertions, not the test name.
+- Per `assert`: name a one-line code change that would still pass it. That
+  change is a real bug -> the assertion is too weak; demand the fix.
+- Count-only / substring-only / `is not None` -> demand the exact value.
+- Output compared to a constant the code imports -> flag rule 2.
+- Only the success branch tested -> name the missing edge + require it.
 
-## Mechanizable subset (enforce in CI, not just here)
+## Mechanizable subset (enforce in CI)
 
-These are grep-able and belong in a `.github` workflow that fails the build, so
-the floor holds even when this skill isn''t loaded:
+Grep-able; wire into a `.github` workflow that fails the build so the floor
+holds when this skill isn''t loaded. Point the CI failure message back at
+this skill.
 
 - `assert .* (==|!=) (list|set)\(<KNOWN_CONSTANT>\)` — config-mirror shape.
-- `assert .* >= 1` / bare `assert .* is not None` in a new test diff — demand an
-  exact value.
-- a count assertion with no content assertion in the following N lines.
-
-A skill teaches the judgment; CI enforces the floor. Wire the CI failure message
-to point back at this skill.
+- `assert .* >= 1` / bare `assert .* is not None` in a new test diff —
+  demand an exact value.
+- Count assertion with no content assertion in the following N lines.
 
 ## Never
 
 - Mock the function under test, then assert the mock returned what you set.
 - Assert a key exists without asserting its value.
 - Let a count or status code stand in for "the right thing happened."
-- Test only the happy path for code that has error branches.
+- Test only the happy path of code that has error branches.
 - Ship a test whose assertions no realistic bug could violate.',
   0
 )
@@ -4177,8 +3881,8 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# test_authoring_pg — Postgres test infra
 
-Read `test_authoring` for the foundational rules. This skill covers the
-test infrastructure for Postgres-backed forks.
+Rules live in `test_authoring` — read it alongside. This skill = the test
+infrastructure for Postgres-backed forks.
 
 ## Foundation
 
@@ -4200,16 +3904,17 @@ shell, and drives the real app through `TestClient` with real auth.
 
 **Throwaway DB setup:**
 - An admin connection (`psycopg.connect(DATABASE_URL_ADMIN, autocommit=True)`)
-  creates a unique `dosarch_test_<uuid>` database at session start and drops it
-  at session teardown.
-- `DATABASE_URL` is injected via `os.environ["DATABASE_URL"]` **before**
-  importing the app; the app''s DB layer reads it at import time.
-- `schema.sql` (the postgres variant) + migrations are applied via
+  creates a unique `dosarch_test_<uuid>` database at session start and drops
+  it at session teardown.
+- `DATABASE_URL` injected via `os.environ["DATABASE_URL"]` BEFORE importing
+  the app — the app''s DB layer reads it at import time.
+- `schema.sql` (the postgres variant) + migrations applied via
   `cur.execute(SCHEMA.read_text())` on the throwaway DB connection.
 - A second throwaway database (or schema) isolates egress/spend rows
   (`DISPATCH_DATABASE_URL`).
 
-**Callers:**
+**Callers** — same `Caller` pattern as the SQLite variant; identity carried
+via cookie or `Authorization: Bearer` header:
 ```python
 alice   # session-cookie caller, USER_A identity
 bob     # session-cookie caller, USER_B identity
@@ -4218,15 +3923,12 @@ anon    # no auth
 shell_a # bearer-key caller, KEY_A
 shell_b # bearer-key caller, KEY_B
 ```
-Same `Caller` pattern as the SQLite variant — identity carried via cookie
-or `Authorization: Bearer` header.
 
 **TestClient:**
-- Created without a `with` block — skips startup hooks (catalogue / model
+- Create WITHOUT a `with` block -> skips startup hooks (catalogue / model
   sync) that would hit the network.
-- Session-scoped (`scope="session"`) so the DB is shared across all tests
-  in a run; tests that need isolation seed their own fixture rows and
-  clean up explicitly.
+- `scope="session"` -> one DB shared across the whole run. A test needing
+  isolation seeds its own fixture rows + cleans up explicitly.
 
 **Direct DB assertions:**
 ```python
@@ -4239,9 +3941,9 @@ rows = cur.fetchall()
 ```
 Assert against real rows, not the response payload.
 
-**Mocking boundary:**
-Mock only true external egress — outbound HTTP, broker calls, third-party
-APIs. Never mock the router, the DB layer, or the function under test.',
+**Mocking boundary:** mock only true external egress — outbound HTTP, broker
+calls, third-party APIs. NEVER mock the router, the DB layer, or the
+function under test.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -4257,8 +3959,8 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# test_authoring_sqlite — SQLite test infra
 
-Read `test_authoring` for the foundational rules. This skill covers the
-test infrastructure for SQLite-backed forks (super-coder, dos-arch).
+Rules live in `test_authoring` — read it alongside. This skill = the test
+infrastructure for SQLite-backed forks (super-coder, dos-arch).
 
 ## Foundation
 
@@ -4279,16 +3981,16 @@ shell, and drives the real app through `TestClient` with real auth.
 | `KEY_A` / `KEY_B` | shell bearer keys | `"ALICEKEY"` / `"BOBKEY"` |
 
 **Throwaway DB setup:**
-- `tempfile.NamedTemporaryFile(suffix=".db")` → path injected via
-  `os.environ["SHELL_DB_PATH"]` **before** importing the app (the auth
-  middleware calls `db()` directly; a `Depends` override alone misses it).
+- `tempfile.NamedTemporaryFile(suffix=".db")` -> path injected via
+  `os.environ["SHELL_DB_PATH"]` BEFORE importing the app — the auth
+  middleware calls `db()` directly; a `Depends` override alone misses it.
 - `apply_schema_and_migrations(con)` builds the schema on the throwaway DB —
-  single source shared by all test harnesses; do not copy-paste it.
+  single source shared by all test harnesses; NEVER copy-paste it.
 - A second throwaway (`DISPATCH_DB_PATH`) isolates egress/spend rows.
-- `os.environ.setdefault("AUTH_COOKIE_SECURE", "")` — plain `dsess` cookie,
+- `os.environ.setdefault("AUTH_COOKIE_SECURE", "")` -> plain `dsess` cookie,
   no `__Host-` prefix in tests.
 
-**Callers:**
+**Callers** — all pytest fixtures:
 ```python
 alice   # session-cookie caller, USER_A identity
 bob     # session-cookie caller, USER_B identity
@@ -4297,13 +3999,13 @@ anon    # no auth
 shell_a # bearer-key caller, KEY_A
 shell_b # bearer-key caller, KEY_B
 ```
-All are pytest fixtures. `shell_a` / `shell_b` use `Authorization: Bearer`.
+`shell_a` / `shell_b` send `Authorization: Bearer`.
 
 **TestClient:**
-- Created without a `with` block — skips startup hooks (catalogue / model
+- Create WITHOUT a `with` block -> skips startup hooks (catalogue / model
   sync) that would hit the network.
-- Session-scoped (`scope="session"`) so the DB is shared across all tests in a
-  run; tests must not depend on a clean DB unless they seed their own via
+- `scope="session"` -> one DB shared across the whole run. Never depend on a
+  clean DB; a test needing isolation seeds its own via
   `build_substrate_db()` (in-memory, returns a `sqlite3.Connection`).
 
 **Direct DB assertions:**
@@ -4316,9 +4018,9 @@ rows = con.execute("SELECT * FROM table WHERE ...").fetchall()
 Assert against real rows, not the response payload. The throwaway path is
 stable for the lifetime of the test session.
 
-**Mocking boundary:**
-Mock only true external egress — outbound IMAP, HTTP, broker calls. Never
-mock the router, the DB layer, or the function under test.',
+**Mocking boundary:** mock only true external egress — outbound IMAP, HTTP,
+broker calls. NEVER mock the router, the DB layer, or the function under
+test.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -4335,16 +4037,15 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   '# windows_devkit — driving the Windows Test VM
 
 Real Windows, for the testing Wine can''t fake: MSI installers, services, the
-registry, system-level behavior. This is **opt-in and link-only** — the operator
-runs the VM; you drive a verified loop against it. Devs build and test; the
-reviewer independently verifies a candidate build with **exec → capture →
-reset**. Grant is explicit, per-fork (`common=0`); you have it because someone
-granted it to your shell.
+registry, system-level behavior. Opt-in + link-only — the operator runs the
+VM; you drive a verified loop against it. Devs build + test; the reviewer
+independently verifies the dev''s candidate artifact with exec → capture →
+reset. Grant is explicit, per-fork (`common=0`).
 
 ## Precondition — the link is configured
 
-The VM lives in `.super-coder/instance.json` under the `vm` key (set via the GUI
-Scripts → **Windows Test VM** wizard, which live-tests every field before save):
+VM config = `vm` key in `.super-coder/instance.json` (set via the GUI Scripts
+→ **Windows Test VM** wizard, which live-tests every field before save):
 
 ```json
 "vm": { "domain": "win-test", "ssh_host": "127.0.0.1", "ssh_port": 22,
@@ -4353,77 +4054,64 @@ Scripts → **Windows Test VM** wizard, which live-tests every field before save
         "libvirt_uri": "qemu:///system" }
 ```
 
-`libvirt_uri` is optional — set it when the domain is system-scope (the default
-`qemu:///session` can''t see it); omit it otherwise.
+`libvirt_uri` optional — set it when the domain is system-scope (the default
+`qemu:///session` can''t see it); omit otherwise.
 
-No `vm` block → no VM linked: stop and ask the operator to run the wizard. The
-admin `configure_winbox` skill must also have run, or the box has no toolchain
-(the `toolchain` check in the wizard is how you confirm it did).
+- No `vm` block → no VM linked: stop + ask the operator to run the wizard.
+- `configure_winbox` must also have run, or the box has no toolchain — the
+  wizard''s `toolchain` check confirms it did.
+- A wrong field → fix it in the wizard (it re-validates); NEVER hand-edit
+  secrets into config.
+- `ssh_key_path` = a path, never key material. Never read it — the key lives
+  host-side with the broker (below).
 
-`ssh_key_path` is a **path**, never key material — and your shell never reads it
-anyway: the key lives host-side with the broker (below). You never hold it.
+## Drive through the host broker — never ssh/virsh directly
 
-## You drive the VM through the host broker — not ssh/virsh directly
-
-You run inside the sandbox container. The VM lives on the host''s libvirt NAT,
-unreachable from here, and the container has no `ssh`, no `virsh`, and no key.
-So you do **not** shell out — you call the **host-side vm-broker** over a unix
-socket in the bind-mounted repo. The broker holds the key + libvirt and does the
-work; nothing about your isolation changes. (See `.super-coder/docs/windows-vm-broker.md`.)
-
-The socket path comes from `sc vm-broker-sock`. Every verb is a `curl`:
+You run inside the sandbox; the VM lives on the host''s libvirt NAT,
+unreachable from here, and the container has no `ssh`, no `virsh`, no key.
+Call the host-side **vm-broker** over its unix socket in the bind-mounted
+repo; the broker holds the key + libvirt. (Detail:
+`.super-coder/docs/windows-vm-broker.md`.)
 
 ```bash
 SOCK="$(sc vm-broker-sock)"
 curl -s --unix-socket "$SOCK" http://vm/health      # liveness check first
 ```
 
-If the curl fails with "not reachable", the broker isn''t running — ask the
-operator to start it on the host: `sc vm-broker-up`. You cannot start it
-yourself (it must run on the host, not in your sandbox).
+curl fails "not reachable" → broker down → ask the operator to run
+`sc vm-broker-up` on the host. You cannot start it yourself (host process,
+not sandbox).
 
 ## The loop — push → exec → capture → reset
 
-Every run starts from the clean snapshot, so installer side-effects never leak
-between runs. That property is the whole point — without the reset, system-level
-testing isn''t trustworthy.
+Every run starts from the clean snapshot — without the reset, installer
+side-effects leak between runs and the next result is a lie.
 
 | Verb | Call |
 |---|---|
-| **push** | `curl -s --unix-socket "$SOCK" http://vm/push -d ''{"src":"<repo path to artifact>"}''` — stages it into `transfer_dir` (the guest''s share) |
+| **push** | `curl -s --unix-socket "$SOCK" http://vm/push -d ''{"src":"<repo path to artifact>"}''` — stages into `transfer_dir` (the guest''s share) |
 | **exec** | `curl -s --unix-socket "$SOCK" http://vm/exec -d ''{"command":"<installer / test cmd>"}''` → `{ok, exit, stdout, stderr}` |
 | **capture** | `curl -s --unix-socket "$SOCK" http://vm/capture -d ''{"command":"<optional cmd>"}''` → stdout + a base64 `virsh screenshot` for GUI state |
-| **reset** (start) | `curl -s --unix-socket "$SOCK" http://vm/reset -X POST` — revert to clean and **boot** it; begin a run from a clean box |
-| **reset** (done) | `curl -s --unix-socket "$SOCK" http://vm/reset -d ''{"running":false}''` — revert to clean and leave it **powered OFF** |
+| **reset** (start) | `curl -s --unix-socket "$SOCK" http://vm/reset -X POST` — revert to clean + **boot** |
+| **reset** (done) | `curl -s --unix-socket "$SOCK" http://vm/reset -d ''{"running":false}''` — revert to clean, leave **powered OFF** |
 
-The broker runs ssh non-interactively and uses the saved `vm` block — you name a
+The broker runs ssh non-interactively from the saved `vm` block — name a
 command, never a host or a key.
 
-**Bracket every run with reset.** Start with `/reset` (boots a clean box); when
-you''re done — even on failure — end with `/reset {"running":false}` so the box
-returns to clean **and powers off**. The VM is large (~12 GB RAM); leaving it
-running idles that on the host. Powering off at the end frees it, and the next
-run''s start-reset boots a fresh clean box anyway.
-
-> [!class4]
-> **Why a flag, not two verbs.** The clean snapshot is OFFLINE (this CPU''s
-> non-migratable `invtsc` flag refuses a live snapshot). So a bare revert already
-> lands powered-off; `--running` (the default, `{"running":true}`) boots it.
-> Ending with `{"running":false}` is therefore clean **and** off in a single op —
-> no wasteful boot-just-to-shut-down.
+**Bracket every run with reset.** Start with `/reset` (boots a clean box);
+end — even on failure — with `/reset {"running":false}` (clean + powered off:
+an idle running VM pins ~12 GB of host RAM). The clean snapshot is OFFLINE
+(this CPU''s non-migratable `invtsc` flag refuses a live snapshot), so a bare
+revert lands powered-off; `{"running":true}` (the default) boots it —
+`{"running":false}` gets clean **and** off in a single op.
 
 ## Stance
 
-- **Reset is not optional.** Test from clean, return to clean — and powered off
-  when you''re done (`/reset {"running":false}`). A dirty box makes the next run''s
-  result a lie; an idle running box wastes ~12 GB of the host''s RAM.
-- **You drive, you don''t provision.** Missing toolchain → that''s the admin''s
-  `configure_winbox` + re-snapshot, not an install from here. Never `winget
-  install` from this loop; it would poison the clean snapshot.
-- **The reviewer verifies, doesn''t build.** Reviewer uses exec → capture → reset
-  on the dev''s candidate artifact to confirm the claim independently.
-- **Link-only stays link-only.** If a field is wrong, fix it in the wizard (it
-  re-validates); don''t hand-edit secrets into config.',
+- **You drive, you don''t provision.** Missing toolchain → admin''s
+  `configure_winbox` + re-bake. NEVER `winget install` from this loop — it
+  poisons the clean snapshot.
+- **The reviewer verifies, doesn''t build.** Reviewer runs exec → capture →
+  reset on the dev''s candidate artifact to confirm the claim independently.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
@@ -4439,15 +4127,14 @@ INSERT INTO skills (name, description, category, command, common, content, is_de
   0,
   '# windows_vm_gui — GUI-driving the Windows Test VM
 
-Clicking by screenshot coordinates is the failure mode this skill exists to
-prevent: pixel targets break on DPI scaling, window position, theme, and dense
-UIs (a CAD ribbon, a settings tree). The reliable approach is **Windows UI
-Automation (UIA)** — pull the accessibility tree and act on elements by ID,
-the way a screen reader would. Deterministic across all of the above.
+Drive the guest GUI via **Windows UI Automation**: pull the UIA tree, act on
+elements by ID. NEVER click by screenshot pixel coordinates when an element ID
+exists — pixel targets break on DPI scaling / window position / theme / dense
+UIs (a CAD ribbon, a settings tree).
 
-Tooling: **Windows-MCP** (`windows-mcp` on PyPI) running *inside the guest*,
-reached over HTTP. It exposes `Snapshot` (UIA tree with element IDs),
-`Click`/`Type`/`Scroll` (act on those IDs), `Screenshot` (visual verify), plus
+Tooling = **Windows-MCP** (`windows-mcp` on PyPI), running inside the guest,
+reached over HTTP. Tools: `Snapshot` (UIA tree + element IDs),
+`Click`/`Type`/`Scroll` (act on IDs), `Screenshot` (visual verify), plus
 `App`, `PowerShell`, `Clipboard`. Expect 0.2–0.5 s per action.
 
 ## Where this sits
@@ -4458,108 +4145,101 @@ reached over HTTP. It exposes `Snapshot` (UIA tree with element IDs),
 | **this** | connect → Snapshot → click/type → verify | exploratory GUI QAQC, visual verification |
 | `configure_winbox` | provision → verify → bake | the admin prep both of the above assume |
 
-GUI driving is for **exploratory QAQC and visual verification** only. If a
-check will run more than twice, it does not belong in a click sequence — see
-the last section.
+GUI driving = exploratory QAQC + visual verification ONLY. A check that will
+run more than twice does not belong in a click sequence — see the last section.
 
-## One-time guest prep (admin — through the configure_winbox flow)
+## One-time guest prep (admin — via the configure_winbox flow)
 
-Every `windows_devkit` run reverts the VM to the `clean` snapshot, so anything
-installed but not baked evaporates on the next reset. Windows-MCP is therefore
-**toolchain**, and it follows the toolchain rule: a missing piece is a
-manifest PR + re-bake, never an ad-hoc install from a test loop.
+Every `windows_devkit` run reverts to the `clean` snapshot → anything installed
+but not baked evaporates on the next reset. Windows-MCP is therefore
+**toolchain**: a missing piece = manifest PR + re-bake, NEVER an ad-hoc install
+from a test loop.
 
-1. Add Python 3.13+ to the fork''s committed winget manifest (e.g.
-   `Python.Python.3.13`); `configure_winbox` pushes + imports it.
+1. Add Python 3.13+ (e.g. `Python.Python.3.13`) to the fork''s committed winget
+   manifest → `configure_winbox` pushes + imports it.
 2. Via the broker (`/exec`, like every `configure_winbox` step):
-   `pip install uv`, sanity-check `uvx windows-mcp serve --help`, then
-   register the auto-start scheduled task, **bound to localhost only** — the
-   guest must never expose it on the VM network:
+   `pip install uv` → `uvx windows-mcp serve --help` exits 0 → register the
+   auto-start scheduled task, bound to localhost ONLY (never expose it on the
+   VM network):
 
    ```
    windows-mcp install --transport streamable-http --host 127.0.0.1 --port 8000
    ```
 
-3. Re-bake: `./sc vm-bake` (host-side, operator-run — the snapshot is the
-   trust anchor). From then on every reset comes back with the server already
-   listening.
+3. Operator runs `./sc vm-bake` (host-side — the snapshot is the trust
+   anchor) → every subsequent reset boots with the server already listening.
 
 Constraints: Python 3.13+ and `uv` in the guest; English-language Windows
-preferred (App-tool limitation); UAC prompts and elevated windows are
-unreachable unless the server itself runs elevated.
+preferred (App-tool limitation); UAC prompts + elevated windows unreachable
+unless the server itself runs elevated.
 
 ## Per-session connect — seat-dependent
 
 **Host-run seat** (a shell booted with `./sc boot` on the host, no sandbox):
 
-1. Start from a clean box (`windows_devkit`''s `/reset`); wait until SSH
-   answers.
+1. `windows_devkit` `/reset` → wait until SSH answers.
 2. Tunnel: `ssh -f -N -L 18000:127.0.0.1:8000 <ssh_user>@<ssh_host>` (values
    from the `vm` block in `.super-coder/instance.json`).
-3. Verify the endpoint answers: `curl -s http://127.0.0.1:18000/mcp`.
+3. `curl -s http://127.0.0.1:18000/mcp` answers → endpoint live.
 4. Connect the harness:
    `claude mcp add --transport http windows-mcp http://127.0.0.1:18000/mcp`
 5. Endpoint dead → check the tunnel first, then the guest task
-   (`schtasks /run /tn windows-mcp-server` over SSH) — and if the task is
-   missing, the snapshot was baked without the prep above.
+   (`schtasks /run /tn windows-mcp-server` over SSH); task missing = snapshot
+   was baked without the prep above.
 
-**Sandboxed seat** (the engine default): the sandbox has no `ssh`, no key,
-and no route to the VM — that is the broker design — so the connection is
-brokered in two halves. The vm-broker (host-side, holds the key) ssh-forwards
-a unix socket in the bind-mounted `run/` dir to the guest''s Windows-MCP; a
-tiny in-sandbox relay gives that socket the TCP URL `claude mcp add` needs:
+**Sandboxed seat** (the engine default): the sandbox has no `ssh`, no key, no
+route to the VM — broker design — so the connection is brokered in two halves:
+the vm-broker (host-side, holds the key) ssh-forwards a unix socket in the
+bind-mounted `run/` dir to the guest''s Windows-MCP; an in-sandbox relay gives
+that socket the TCP URL `claude mcp add` needs.
 
-1. Start from a clean box (`windows_devkit`''s `/reset`); wait until SSH
-   answers.
-2. Open the broker tunnel:
+1. `windows_devkit` `/reset` → wait until SSH answers.
+2. Broker tunnel:
    `curl --unix-socket $(./sc vm-broker-sock) -X POST http://vm/mcp/up`
    (idempotent; forwards `run/vm-mcp.sock` to the guest''s `mcp_port`,
    default 8000).
-3. Start the in-sandbox relay: `./sc vm-mcp-relay up` (listens on
-   `127.0.0.1:18000`, pipes to the tunnel socket; also idempotent).
-4. Verify the endpoint answers: `curl -s http://127.0.0.1:18000/mcp`.
+3. Relay: `./sc vm-mcp-relay up` (listens on `127.0.0.1:18000`, pipes to the
+   tunnel socket; idempotent).
+4. `curl -s http://127.0.0.1:18000/mcp` answers → endpoint live.
 5. Connect the harness:
    `claude mcp add --transport http windows-mcp http://127.0.0.1:18000/mcp`
-6. Endpoint dead → `./sc vm-mcp-relay status` first (`upstream: false` means
-   the broker tunnel is down — redo step 2; a reset drops it, so reconnect
-   after every `/reset`), then the guest task
-   (`schtasks /run /tn windows-mcp-server` via broker `/exec`) — and if the
-   task is missing, the snapshot was baked without the prep above.
-7. Done driving: `./sc vm-mcp-relay down` and
+6. Endpoint dead → `./sc vm-mcp-relay status` first: `upstream: false` =
+   broker tunnel down → redo step 2 (every `/reset` drops the tunnel —
+   reconnect after each). Still dead → guest task via broker `/exec`:
+   `schtasks /run /tn windows-mcp-server`; task missing = snapshot was baked
+   without the prep above.
+7. Done driving: `./sc vm-mcp-relay down` +
    `curl --unix-socket $(./sc vm-broker-sock) -X POST http://vm/mcp/down`.
 
-No key, no ssh, no network surface enters the sandbox — both hops are unix
-sockets in the bind mount, same posture as every other broker verb. Do
-**not** fake GUI driving by guessing pixel coordinates off `/capture`
-screenshots — that is the exact failure mode this skill bans.
+NEVER fake GUI driving by guessing pixel coordinates off `/capture`
+screenshots.
 
 ## Driving rules
 
-- **Snapshot first, always.** Act on element IDs. Never guess coordinates
-  from a screenshot when an element ID exists.
+- `Snapshot` first, always → act on element IDs.
 - Standard chrome (ribbons, dialogs, palettes — WPF/WinForms/WinUI) is
   UIA-visible → click by element.
-- Custom-rendered surfaces (drawing canvases, game views, embedded GL) have
-  no UIA elements — the one legitimate coordinate fallback: `Screenshot` →
-  pick the pixel target → `Click(x, y)` → `Screenshot` again to verify. Never
-  chain canvas clicks without verifying between them.
-- Re-`Snapshot` after anything that changes the window set — stale element
-  IDs misclick.
+- Custom-rendered surfaces (drawing canvases, game views, embedded GL) have no
+  UIA elements — the ONE legitimate coordinate fallback: `Screenshot` → pick
+  the pixel target → `Click(x, y)` → `Screenshot` again to verify. NEVER chain
+  canvas clicks without verifying between them.
+- Re-`Snapshot` after anything that changes the window set — stale element IDs
+  misclick.
 - Verify state visually after each meaningful action.
 - Batch reads; don''t spam single-element queries.
 
 ## Prefer no mouse at all
 
 Anything repeatable belongs in an in-process test path driven over the exec
-loop, not in a click sequence. Most GUI platforms have one — for Revit
-add-ins: RevitTestFramework, ricaun.RevitTest, Revit.TestRunner (NUnit
-in-process via journal, no UI at all). The hierarchy, in order:
+loop, not a click sequence. Most GUI platforms have one — Revit add-ins:
+RevitTestFramework, ricaun.RevitTest, Revit.TestRunner (NUnit in-process via
+journal, no UI). Hierarchy, in order:
 
 ```
 in-process test framework  →  UIA by element ID  →  coordinates (only where the tree is blind)
 ```
 
-If a check will run more than twice, it goes to the top of that list.',
+A check that will run more than twice goes to the top of that list.',
   0
 )
 ON CONFLICT(name) DO UPDATE SET
