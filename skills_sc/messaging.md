@@ -6,7 +6,7 @@ edit: changes here are overwritten — author via the shell or localhost GUI
 
 # messaging
 
-Shell-to-shell inbox — send a markdown message to another shell (typed: shell/task/result; pr_event is daemon-emitted), check your unread inbox, mark messages read. Driven by `sc mem message`. Use to coordinate with another shell; the recipient sees it on its next boot via the STATUS Inbox count.
+Shell-to-shell inbox — send a markdown message to another shell (typed: shell/task/result; pr_event is daemon-emitted), check your unread inbox, verify delivery via the sent view, mark messages read. Driven by `sc mem message`. Use to coordinate with another shell; the recipient sees it on its next boot via the STATUS Inbox count.
 
 **Category:** substrate
 
@@ -19,7 +19,7 @@ recipient addressed by `shortname`. Body = markdown, preserved verbatim.
 Recipient discovers it on its next boot via the `## STATUS` `Inbox:` count.
 
 Trigger: `--message`
-Args: `check [N] | send <to-shortname> <body> [--kind k] | mark-read <id>`
+Args: `check [N] | send <to-shortname> <body> [--kind k] | sent | mark-read <id>`
 
 ## Message kinds
 
@@ -58,6 +58,20 @@ sc mem message send <to-shortname> "<body>" [--kind shell|task|result]
   · `sc mem message send plan1 "sprint 12: unit 3 merged (PR #41)" --kind result`
 - Unknown / deleted recipient -> `mem: recipient shortname '<x>' unknown`;
   empty body -> `mem: body is empty`. Surface either to the operator plainly.
+- Sends are idempotent under load: each invocation carries a dedupe key, so
+  a timed-out send retries itself and can never write a duplicate. Do NOT
+  re-run a timed-out send by hand — the retry already happened; if it still
+  died, check `sent` first.
+
+## sent — your outbound view
+
+```
+sc mem message sent           # latest 50 you sent, newest first, read receipts
+```
+
+Verify delivery after an ambiguous failure (a send that died after its
+retries) before ever resending. A row present = delivered; absent = safe
+to resend.
 
 ## mark-read — clear an inbox item (idempotent)
 
