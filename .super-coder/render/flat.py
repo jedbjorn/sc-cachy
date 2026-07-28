@@ -76,9 +76,34 @@ def _write_if_changed(path: Path, content: str, written: list, skipped: list) ->
     written.append(path)
 
 
+def _prune_stale_files(
+    root: Path,
+    managed_dirs: tuple[str, ...],
+    expected: set[Path],
+    removed: list[Path],
+) -> None:
+    """Remove generated files that no longer have a DB row.
+
+    The `_sc` directories are renderer-owned. Without pruning, stripping the
+    source snapshot during install still leaves its old specs and docs visible
+    in the new fork.
+    """
+    for rel_dir in managed_dirs:
+        directory = root / rel_dir
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*"):
+            if path.is_file() and path not in expected:
+                path.unlink()
+                removed.append(path)
+        for path in sorted(directory.rglob("*"), reverse=True):
+            if path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+
+
 # ── Flat visibility render ────────────────────────────────────────────────────
 
-def _render_documents(con, written, skipped, root: Path) -> None:
+def _render_documents(con, written, skipped, removed, root: Path) -> None:
     """specs (kind='spec') → specs_sc/, docs (kind='doc') → docs_sc/.
 
     The document's own `render_path` is authoritative when set; otherwise we
@@ -90,6 +115,8 @@ def _render_documents(con, written, skipped, root: Path) -> None:
         "LEFT JOIN roadmap r ON r.feature_id = d.feature_id "
         "ORDER BY d.feature_id, d.kind, d.seq"
     ).fetchall()
+    render_rows = []
+    expected = set()
     for r in rows:
         if not r["body"]:
             continue
@@ -100,6 +127,15 @@ def _render_documents(con, written, skipped, root: Path) -> None:
             slug = slug.lower().replace(" ", "-").replace("—", "-")
             slug = "".join(c for c in slug if c.isalnum() or c in "-_")
             rel = f"{base}/{slug}.md"
+        path = root / rel
+        render_rows.append((r, path))
+        if (path.is_relative_to(root / "specs_sc")
+                or path.is_relative_to(root / "docs_sc")):
+            expected.add(path)
+
+    _prune_stale_files(root, ("specs_sc", "docs_sc"), expected, removed)
+
+    for r, path in render_rows:
         # Per-document metadata into the rendered frontmatter — where the
         # feature sits in the plan + whether this spec is frozen.
         extra = [
@@ -107,7 +143,7 @@ def _render_documents(con, written, skipped, root: Path) -> None:
             f"roadmap_status: {r['roadmap_status'] or ''}",
             f"frozen: {'true' if r['frozen'] else 'false'}",
         ]
-        _write_if_changed(root / rel, with_banner(r["body"], extra),
+        _write_if_changed(path, with_banner(r["body"], extra),
                           written, skipped)
 
 
@@ -174,7 +210,7 @@ def _skill_slug(name: str) -> str:
     return name.strip().lower().replace(" ", "-")
 
 
-def _render_skills_catalogue(con, written, skipped, root: Path) -> None:
+def _render_skills_catalogue(con, written, skipped, removed, root: Path) -> None:
     """skills_sc/ — the substrate's skill catalogue for browsers: one file per
     skill plus a README index. This is the *catalogue* (every non-deleted
     skill), distinct from `.claude/skills/` which renders one shell's grants."""
@@ -185,8 +221,10 @@ def _render_skills_catalogue(con, written, skipped, root: Path) -> None:
     index = ["# Skills", "",
              "> The substrate's skill catalogue, rendered from the DB. "
              "Per-shell grants live in `.claude/skills/` (rebuilt at boot).", ""]
+    expected = {root / "skills_sc" / "README.md"}
     for r in rows:
         slug = _skill_slug(r["name"])
+        expected.add(root / "skills_sc" / f"{slug}.md")
         index.append(f"- [`{r['name']}`](skills_sc/{slug}.md) — "
                      f"{(r['description'] or '').strip().splitlines()[0] if r['description'] else ''}")
         meta = []
@@ -203,6 +241,7 @@ def _render_skills_catalogue(con, written, skipped, root: Path) -> None:
             parts += ["---", "", r["content"].strip()]
         _write_if_changed(root / "skills_sc" / f"{slug}.md",
                           with_banner("\n".join(parts).rstrip()), written, skipped)
+    _prune_stale_files(root, ("skills_sc",), expected, removed)
     _write_if_changed(root / "skills_sc" / "README.md",
                       with_banner("\n".join(index).rstrip()), written, skipped)
 
@@ -217,10 +256,11 @@ def render_visibility(con: sqlite3.Connection, root: "Path | None" = None) -> di
     root = root or REPO_ROOT
     written: list[Path] = []
     skipped: list[Path] = []
-    _render_documents(con, written, skipped, root)
+    removed: list[Path] = []
+    _render_documents(con, written, skipped, removed, root)
     _render_roadmap(con, written, skipped, root)
-    _render_skills_catalogue(con, written, skipped, root)
-    return {"written": written, "skipped": skipped}
+    _render_skills_catalogue(con, written, skipped, removed, root)
+    return {"written": written, "skipped": skipped, "removed": removed}
 
 
 # ── Harness skill render (per booting shell; gitignored cache) ────────────────

@@ -99,13 +99,33 @@ def wire_make_aliases(repo_root: Path | None = None) -> str:
     )
     return "appended -include .super-coder/aliases.mk to existing Makefile → `make dos-e` works"
 
-# super-coder's own per-instance content — present in a freshly-pulled fork
-# because the git checkout brought it along. A fork must not inherit it.
-STRIP = [
-    REPO_ROOT / ".sc-state" / "content.sql",
-    ENGINE / "snapshot" / "content.sql",  # legacy pre-B7 location (one-release)
-    ENGINE / "assets" / "seed" / "super-coder-founding-spec.md",
-]
+def strip_instance_content(
+    repo_root: Path = REPO_ROOT,
+    engine: Path = ENGINE,
+) -> list[Path]:
+    """Remove source-repo state before building a newly installed fork.
+
+    The memory snapshot is not the only authored state carried by a source
+    checkout: the repo-map sections and derived map cache are instance-local
+    too. Removing the whole set before rebuild prevents a new fork from
+    inheriting either the source team's memory or its navigation.
+    """
+    paths = [
+        repo_root / ".sc-state" / "content.sql",
+        repo_root / ".sc-state" / "map_content.sql",
+        repo_root / ".sc-state" / "map.db",
+        repo_root / ".sc-state" / "map.db-wal",
+        repo_root / ".sc-state" / "map.db-shm",
+        engine / "snapshot" / "content.sql",  # legacy pre-B7 location
+        engine / "assets" / "seed" / "super-coder-founding-spec.md",
+    ]
+    removed = []
+    for path in paths:
+        if not path.exists():
+            continue
+        path.unlink()
+        removed.append(path)
+    return removed
 
 
 def sh(*args: str) -> subprocess.CompletedProcess:
@@ -697,12 +717,8 @@ def main(argv: list[str]) -> int:
 
     # 4. Strip super-coder's per-instance content -----------------------------
     step("Stripping super-coder's per-instance content (a fork inherits the system, not the memory)")
-    for p in STRIP:
-        if p.exists():
-            p.unlink()
-            print(f"  removed {p.relative_to(REPO_ROOT)}")
-        else:
-            print(f"  (already absent) {p.relative_to(REPO_ROOT)}")
+    for p in strip_instance_content():
+        print(f"  removed {p.relative_to(REPO_ROOT)}")
 
     # 5. Build the system DB --------------------------------------------------
     step("Building the system DB (schema + migrations)")

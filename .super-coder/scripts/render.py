@@ -57,10 +57,13 @@ def _heal_fresh(con) -> None:
 
 
 def _report(label: str, summary: dict) -> None:
-    w, s = len(summary["written"]), len(summary["skipped"])
-    print(f"render {label}: {w} written, {s} unchanged")
+    w, s, r = (len(summary["written"]), len(summary["skipped"]),
+               len(summary.get("removed", [])))
+    print(f"render {label}: {w} written, {s} unchanged, {r} removed")
     for p in summary["written"]:
         print(f"  + {p.relative_to(flat.REPO_ROOT)}")
+    for p in summary.get("removed", []):
+        print(f"  - {p.relative_to(flat.REPO_ROOT)}")
 
 
 def main(argv: list[str]) -> int:

@@ -505,6 +505,14 @@ def open_db():
     return con
 
 
+def is_blank_instance(con) -> bool:
+    """True only for the migrations-only state before `install` seeds a team."""
+    row = con.execute(
+        "SELECT EXISTS(SELECT 1 FROM users), EXISTS(SELECT 1 FROM shells)"
+    ).fetchone()
+    return row[0] == 0 and row[1] == 0
+
+
 # ── Auth (username-only) ────────────────────────────────────────────────────
 
 def authenticate(con, interactive: bool = True):
@@ -880,6 +888,10 @@ def main() -> None:
         print(style.banner(REPO_ROOT.name))
 
     con = open_db()
+    if os.environ.get("RENDER_ONLY") and is_blank_instance(con):
+        con.close()
+        print("✓ verify: system DB rebuilt with blank per-instance state")
+        return
     # Self-heal stale engine skills before anything this boot reads them
     # (compose's SKILLS block, render_skill_md). A DB stranded by an in-place
     # `0001` regen repairs itself from assets/skills/ instead of needing a manual
