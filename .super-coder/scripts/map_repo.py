@@ -131,6 +131,14 @@ def git(*args: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def default_branch() -> str:
+    """Return the remote's default branch, independent of the checked-out worktree."""
+    head = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head and head.startswith("origin/"):
+        return head[len("origin/"):]
+    return head or "main"
+
+
 def is_source_repo() -> bool:
     """In a fork, .super-coder is infrastructure (skip it). In the SOURCE repo
     the engine IS the project, so map it too. Names canonical in
@@ -352,7 +360,7 @@ def main() -> int:
             "file_count, mapped_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
             (REPO_ROOT.name, str(REPO_ROOT), git("remote", "get-url", "origin"),
              "git" if (REPO_ROOT / ".git").exists() else None,
-             git("rev-parse", "--abbrev-ref", "HEAD"), files,
+             default_branch(), files,
              datetime.now().isoformat(timespec="seconds")))
         con.commit()
         # Fork-owned semantic extractors (endpoints / db schema / routes), if any.
