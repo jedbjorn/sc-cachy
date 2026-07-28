@@ -72,6 +72,22 @@ class SourceRepoGuardTest(unittest.TestCase):
         finally:
             map_repo.git = orig
 
+    def test_map_repo_default_branch_is_not_current_checkout(self):
+        orig = map_repo.git
+        try:
+            map_repo.git = lambda *args: (
+                "origin/trunk"
+                if args == ("symbolic-ref", "--quiet", "--short",
+                            "refs/remotes/origin/HEAD")
+                else "feature/in-progress"
+            )
+            self.assertEqual(map_repo.default_branch(), "trunk")
+
+            map_repo.git = lambda *args: None
+            self.assertEqual(map_repo.default_branch(), "main")
+        finally:
+            map_repo.git = orig
+
     def test_update_remote_matcher_accepts_renamed_url(self):
         orig = update.git
         try:
