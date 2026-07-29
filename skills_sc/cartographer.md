@@ -53,10 +53,12 @@ and reload on a fresh map db.
    Eyeball the top-level dirs -> anything mis-classified, or a
    generated/vendored dir being indexed?
 
-2. **Author `.sc-state/map.config.json`** — authored content (tracked,
-   per-fork, survives `sc update`; lives in `.sc-state/`, outside the
-   gitignored engine dir). All keys optional; each merges over `map_repo.py`
-   defaults:
+2. **Author `$SC_ROOT/.sc-state/map.config.json`** — canonical-root content
+   (tracked, per-fork, survives `sc update`; lives in `.sc-state/`, outside the
+   gitignored engine dir). The mapper deliberately reads the shared main
+   checkout, not your shell worktree, so use `$SC_ROOT` explicitly and do not
+   copy this file into the worktree. All keys optional; each merges over
+   `map_repo.py` defaults:
    ```json
    {
      "skip_dirs":  ["generated", "fixtures"],
@@ -91,8 +93,12 @@ and reload on a fresh map db.
 5. **Describe all NULLs** — run the description worklist (Standing jobs § 2);
    leave only when it returns zero rows.
 
-6. **Commit** the config + hooks (`git` skill) -> `sc mem state "…"` ->
-   `sc mem oriented` (sets `bootstrapped=1` — the write is live in the
+6. **Hand off persistence.** Hook wiring is per-clone runtime state, not a
+   commit. The config lives in the canonical main checkout, which only admin
+   may commit: use the `messaging` skill to send admin the exact authored path
+   (`.sc-state/map.config.json`) and your verification result. Do not branch or
+   commit the main checkout from the cartographer shell. Then `sc mem state
+   "…"` -> `sc mem oriented` (sets `bootstrapped=1` — the write is live in the
    shared DB; it does NOT snapshot).
 
 ## Heal — run whenever the map looks wrong
@@ -110,7 +116,8 @@ stale or empty on a clone whose hooks never got wired.
    DELETE or repath every row it returns.
 6. **Describe all NULLs** (Standing jobs § 2) -> worklist empty before you
    leave.
-7. Commit.
+7. Hand the exact changed canonical-root paths and verification result to admin
+   for commit, as in first-boot step 6.
 
 ## Standing jobs — sections, descriptions, product DB
 
@@ -206,7 +213,8 @@ Adopt one per stack:
    (fastapi? flask? svelte? next?) + the file mix
    (`SELECT lang, COUNT(*) FROM dr_filepath GROUP BY lang`).
 2. **Copy the matching reference** from the engine's
-   `.super-coder/templates/map_extractors/` into `.sc-state/map_extractors/`:
+   `.super-coder/templates/map_extractors/` into
+   `$SC_ROOT/.sc-state/map_extractors/`:
    - `fastapi_endpoints.py` — decorator routes (`@app.get(...)`, Flask `@app.route`) → `dr_endpoint`
    - `sqlite_schema.py` — SQL `CREATE TABLE/VIEW` → `dr_db_table`/`dr_db_column`
    - `sveltekit_routes.py` — filesystem routes + `*.svelte` → `dr_route`/`dr_component`
@@ -215,8 +223,10 @@ Adopt one per stack:
    rewrite the match — target the dominant pattern, not 100%.
 3. **Run + verify:** `sc map` -> table populated, rows look right
    (`SELECT method, path FROM dr_endpoint LIMIT 10;`).
-4. **Commit** `.sc-state/map_extractors/`. (Snapshotting the authored layer =
-   the admin/GUI step above — not yours to run.)
+4. **Hand off persistence** to admin via the `messaging` skill, naming each
+   changed `.sc-state/map_extractors/` path and the verification result. These
+   canonical-root files are normal tracked files; snapshotting the authored DB
+   layer remains the separate admin/GUI step above.
 
 **Contract** (full version: `templates/map_extractors/README.md`): each module
 defines `extract(con, repo_root, cfg) -> str`. `con` = the live map db with
