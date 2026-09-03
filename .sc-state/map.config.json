@@ -10,5 +10,35 @@
   ],
   "skip_files": [
     "shell_db.db"
+  ],
+  "role_overrides": [
+    {
+      "prefix": "sc",
+      "role": "code"
+    },
+    {
+      "prefix": ".github/",
+      "role": "config"
+    },
+    {
+      "prefix": ".super-coder/hooks/",
+      "role": "code"
+    },
+    {
+      "prefix": ".super-coder/migrations/",
+      "role": "code"
+    },
+    {
+      "prefix": ".super-coder/assets/skills/",
+      "role": "doc"
+    },
+    {
+      "prefix": ".super-coder/docs/",
+      "role": "doc"
+    },
+    {
+      "glob": "*.mk",
+      "role": "config"
+    }
   ]
 }
